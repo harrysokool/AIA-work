@@ -1,25 +1,26 @@
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+
 # Python
 __pycache__/
 *.py[cod]
-*.pyo
-*.pyd
-*.so
-*.egg-info/
-dist/
-build/
-.pytest_cache/
-.mypy_cache/
 
 # Virtual environments
 .venv/
 venv/
 env/
 
-# OS / editor
-.DS_Store
-.vscode/
-.idea/
-
-# Data outputs (keep code, ignore scraped data)
+# Generated data
 python/data/agents/
 python/data/captcha/
+python/captcha.png
+
+# Playwright cache (optional)
+.playwright/
+
+# Secrets
+*.env
+tokens.*
+*.key
