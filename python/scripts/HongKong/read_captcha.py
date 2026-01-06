@@ -5,6 +5,6 @@ from pathlib import Path
 from PIL import Image
 
 
-BASE_DIR = Path(__file__).resolve().parent.parent
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
 CAPTCHA_PNG = BASE_DIR / "data" / "captcha" / "captcha.png"
 DECODED_CAPTCHA_PNG = BASE_DIR / "data" / "captcha" / "decoded_captcha.png"

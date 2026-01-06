@@ -37,7 +37,7 @@ def fetch_agent(sessionToken):
     }
 
     # directory/file paths
-    BASE_DIR = Path(__file__).resolve().parent.parent
+    BASE_DIR = Path(__file__).resolve().parent.parent.parent
     AGENTS_DIR = BASE_DIR / "data" / "agents"
     BY_LETTER_DIR = AGENTS_DIR / "agents_by_letter"
     BY_LETTER_DIR.mkdir(parents=True, exist_ok=True)
@@ -48,14 +48,25 @@ def fetch_agent(sessionToken):
     for letter in alphabets:
         params["surNameValue"] = letter
 
-        resp = s.get(f"{BASE_URL}/individual", params=params, headers=headers, timeout=30)
+        try:
+            resp = s.get(f"{BASE_URL}/individual", params=params, headers=headers, timeout=30)
+        except Exception as e:
+            print("Error", e)
+            continue
         if resp.status_code != 200:
             print(f"Failed for {letter}: {resp.status_code}")
             continue
         
-        # dict_keys(['data', 'itemsCount', 'errorCode', 'errorMsg']), this will return these fields
-        obj = resp.json()
-
+        try:
+            # dict_keys(['data', 'itemsCount', 'errorCode', 'errorMsg']), this will return these fields
+            obj = resp.json()
+        except Exception as e:
+            print("Error", e)
+            continue
+        if len(obj.get("data",[])) != int(obj.get("itemsCount", 0)):
+            print(f"{letter} is missing some data")
+            continue
+            
         agentCount = 0
         for agent in obj.get("data", []):
             if agent.get("engName", "").lower().startswith(letter):

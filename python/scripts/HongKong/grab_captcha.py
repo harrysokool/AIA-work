@@ -2,7 +2,7 @@ from playwright.sync_api import sync_playwright
 from urllib.parse import urljoin
 from pathlib import Path
 
-BASE_DIR = Path(__file__).resolve().parent.parent
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
 CAPTCHA_DIR = BASE_DIR / "data" / "captcha"
 CAPTCHA_DIR.mkdir(parents=True, exist_ok=True)
 

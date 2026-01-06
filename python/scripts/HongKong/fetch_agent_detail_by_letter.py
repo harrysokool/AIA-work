@@ -66,12 +66,12 @@ def fetch_agent(sessionToken, letter):
     }
 
     # directory paths
-    BASE_DIR = Path(__file__).resolve().parent.parent
+    BASE_DIR = Path(__file__).resolve().parent.parent.parent
     AGENTS_DIR = BASE_DIR / "data" / "agents"
     BY_LETTER_DIR = AGENTS_DIR / "agents_by_letter"
     BY_LETTER_DIR.mkdir(parents=True, exist_ok=True)
 
-    params["surNameValue"] = letter
+    params["surNameValue"] = letter.strip().lower()
 
     resp = s.get(f"{BASE_URL}/individual", params=params, headers=headers, timeout=30)
     if resp.status_code != 200:
@@ -85,7 +85,7 @@ def fetch_agent(sessionToken, letter):
     agentCount = 0
     letter_agent = []
     for agent in obj.get("data", []):
-        if agent.get("engName", "").lower().startswith(letter.lower()):
+        if agent.get("engName", "").lower().startswith(letter):
             key = agent.get("key", "")
             licStatus = agent.get("licenseStatus", "")
             detail_params = {
@@ -109,7 +109,7 @@ def fetch_agent(sessionToken, letter):
     
 if __name__ == "__main__":
     if len(sys.argv) < 3:
-        print("Usage: python fetch_agents.py <token>")
+        print("Usage: python fetch_agents.py <token> <letter>")
         sys.exit(1)
 
     fetch_agent(sys.argv[1], sys.argv[2])
