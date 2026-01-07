@@ -7,9 +7,6 @@ def fetch_agent(sessionToken):
     s = requests.Session()
     print('session created!')
 
-    # clear and set up cookies
-    s.cookies.clear()
-
     # url for searching the agents
     BASE_URL = "https://iir.ia.org.hk/IISPublicRegisterRestfulAPI/v1/search"
 
@@ -38,10 +35,7 @@ def fetch_agent(sessionToken):
 
     # directory/file paths
     BASE_DIR = Path(__file__).resolve().parent.parent.parent
-    AGENTS_DIR = BASE_DIR / "data" / "agents"
-    BY_LETTER_DIR = AGENTS_DIR / "agents_by_letter"
-    BY_LETTER_DIR.mkdir(parents=True, exist_ok=True)
-    ALL_FILE = AGENTS_DIR / "agents_all_count.json"
+    ALL_FILE = BASE_DIR / "data" / "agents" / "hongkong" / "agents_all_count.json"
 
     totalActiveAgentCount = 0
     agentDict = {}
@@ -50,37 +44,41 @@ def fetch_agent(sessionToken):
 
         try:
             resp = s.get(f"{BASE_URL}/individual", params=params, headers=headers, timeout=30)
+            if resp.status_code != 200:
+                print(f"Failed for {letter}: {resp.status_code}")
+                continue
         except Exception as e:
             print("Error", e)
-            continue
-        if resp.status_code != 200:
-            print(f"Failed for {letter}: {resp.status_code}")
             continue
         
         try:
             # dict_keys(['data', 'itemsCount', 'errorCode', 'errorMsg']), this will return these fields
             obj = resp.json()
+            if len(obj.get("data",[])) != int(obj.get("itemsCount", 0)):
+                print(f"{letter} is missing some data")
+                continue
         except Exception as e:
             print("Error", e)
             continue
-        if len(obj.get("data",[])) != int(obj.get("itemsCount", 0)):
-            print(f"{letter} is missing some data")
-            continue
             
         agentCount = 0
+        agentSkipped = 0
         for agent in obj.get("data", []):
             if agent.get("engName", "").lower().startswith(letter):
                 agentCount += 1
+            else:
+                agentSkipped += 1
                 
         agentDict[f"{letter}_count"] = agentCount
         totalActiveAgentCount += agentCount
 
-        print(f"Letter {letter} saved {agentCount} records")
+        print(f"Letter {letter} saved {agentCount} records, skipped {agentSkipped} due to mismatch letter with last name")
 
     agentDict["totalAgentCount"] = totalActiveAgentCount
     with open(ALL_FILE, "w", encoding="utf-8") as f:
         json.dump(agentDict, f, ensure_ascii=False, indent=2)
 
+    print(f"total active agent count: {totalActiveAgentCount}")
     print("Done counting agents.")
     
 if __name__ == "__main__":
