@@ -4,7 +4,7 @@ import requests
 from pathlib import Path
 import time
 
-def fetch_agent_detail(letter):
+def fetch_agent_detail(letter, category):
     print(f"Fetching agent details for letter: {letter}")
 
     s = requests.Session()
@@ -14,8 +14,9 @@ def fetch_agent_detail(letter):
     })
 
     BASE_DIR = Path(__file__).resolve().parent.parent.parent
-    RAW_DATA_DIR = BASE_DIR / "data" / "agents" /"raw_agent_data_by_letter_macau"
-    PROCESSED_DATA_DIR = BASE_DIR / "data" / "agents" / "processed_agent_data_by_letter_macau"
+    MACAU_DATA_DIR = BASE_DIR / "data" / "agents" / "macau"
+    RAW_DATA_DIR =  MACAU_DATA_DIR / category / "raw_agent_data_by_letter"
+    PROCESSED_DATA_DIR = MACAU_DATA_DIR / category /  "processed_agent_data_by_letter"
     RAW_DATA_DIR.mkdir(parents=True, exist_ok=True)
     PROCESSED_DATA_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -31,21 +32,24 @@ def fetch_agent_detail(letter):
     DETAIL_URL = "https://iiep.amcm.gov.mo/platform-enquiry-service/public/api/v1/web/enquiry/licenses/detail"
 
     agent_detail = []
+    agent_skipped = 0
     for agent in agents:
         name_pt = (agent.get("namePt") or "").strip()
         if not name_pt.lower().startswith(letter.lower()):
             print(f"Skipping agent {name_pt} due name does not start with letter {letter}")
+            agent_skipped += 1
             continue
 
-        category = agent.get("licenseCategory", "")
+        licenseCategory = agent.get("licenseCategory", "")
         license_no = agent.get("licenseNo", "")
 
-        if not category or not license_no:
+        if not licenseCategory or not license_no:
             print(f"Skipping agent {name_pt} due to missing license info.")
+            agent_skipped += 1
             continue
 
         detail_params = {
-            "category": category, 
+            "category": licenseCategory, 
             "no": license_no
         }
 
@@ -65,10 +69,10 @@ def fetch_agent_detail(letter):
     with open(output_file, "w", encoding="utf-8") as f:
         json.dump(agent_detail, f, ensure_ascii=False, indent=2)
 
-    print(f"Letter {letter} saved {len(agent_detail)} records")
+    print(f"Letter {letter} saved {len(agent_detail)} records, skipped {agent_skipped} records")
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("Usage: python script.py <letter>")
+    if len(sys.argv) < 3:
+        print("Usage: python script.py <letter> <licenseCategory>")
         sys.exit(1)
-    fetch_agent_detail(sys.argv[1])
+    fetch_agent_detail(sys.argv[1], sys.argv[2])
