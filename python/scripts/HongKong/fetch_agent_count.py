@@ -2,6 +2,7 @@ import requests
 from pathlib import Path
 import json
 import sys
+import time
 
 
 def fetch_agent(sessionToken):
@@ -64,7 +65,7 @@ def fetch_agent(sessionToken):
             else:
                 agentSkipped += 1
 
-        agentDict[f"{letter}_count"] = agentCount
+        agentDict[letter] = agentCount
         totalActiveAgentCount += agentCount
 
         print(
@@ -83,4 +84,7 @@ if __name__ == "__main__":
     if len(sys.argv) < 2:
         print("Usage: python fetch_agents.py <token>")
         sys.exit(1)
+    tic = time.perf_counter()
     fetch_agent(sys.argv[1])
+    toc = time.perf_counter()
+    print(f"total time took: {toc - tic:0.4f}")
