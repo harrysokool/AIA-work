@@ -66,7 +66,7 @@ def fetch_agent(sessionToken, letter, status):
     BY_LETTER_DIR.mkdir(parents=True, exist_ok=True)
 
     try:
-        resp = s.get(f"{BASE_URL}/individual", params=params, timeout=30)
+        resp = s.get(f"{BASE_URL}/individual", params=params, timeout=30, verify=False)
         resp.raise_for_status()
         obj = resp.json()
     except Exception as e:
@@ -85,8 +85,7 @@ def fetch_agent(sessionToken, letter, status):
 
             try:
                 detail_resp = s.get(
-                    f"{BASE_URL}/individualDetail",
-                    params=detail_params,
+                    f"{BASE_URL}/individualDetail", params=detail_params, verify=False
                 )
                 detail_resp.raise_for_status()
                 agentDetail = detail_resp.json()
