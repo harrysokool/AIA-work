@@ -5,6 +5,35 @@ from pathlib import Path
 import time
 
 
+def filter_agent_by_letter(agents, letter):
+    if not agents:
+        pass
+
+    filtered_agents = []
+    for agent in agents:
+        lastname = agent.get("namePt", "").strip().lower()
+        if lastname and lastname[0] == letter:
+            filtered_agents.append(agent)
+
+    return filtered_agents
+
+
+def filter_agent_by_company(agents, company):
+    if not agents:
+        return
+
+    filtered_agents = []
+    for agent in agents:
+        corp = agent.get("corporates", [])
+        corp_items = corp.get("items", [])
+        for item in corp_items:
+            corp_item_name = item.get("nameEn", "")
+            if corp_item_name[:3] == company:
+                filtered_agents.append(agent)
+
+    return filtered_agents
+
+
 def fetch_agent_detail(letter, category):
     print(f"Fetching agent details for letter: {letter}")
 
@@ -34,23 +63,13 @@ def fetch_agent_detail(letter, category):
     agents = data.get("content", [])
     DETAIL_URL = "https://iiep.amcm.gov.mo/platform-enquiry-service/public/api/v1/web/enquiry/licenses/detail"
 
+    valid_agents = filter_agent_by_letter(agents, letter)
     agent_detail = []
-    agent_skipped = 0
-    for agent in agents:
-        name_pt = (agent.get("namePt") or "").strip()
-        if not name_pt.lower().startswith(letter.lower()):
-            print(
-                f"Skipping agent {name_pt} due name does not start with letter {letter}"
-            )
-            agent_skipped += 1
-            continue
-
+    for agent in valid_agents:
         licenseCategory = agent.get("licenseCategory", "")
         license_no = agent.get("licenseNo", "")
 
         if not licenseCategory or not license_no:
-            print(f"Skipping agent {name_pt} due to missing license info.")
-            agent_skipped += 1
             continue
 
         detail_params = {"category": licenseCategory, "no": license_no}
@@ -58,12 +77,14 @@ def fetch_agent_detail(letter, category):
         try:
             resp = s.get(DETAIL_URL, params=detail_params, timeout=10)
             if resp.status_code != 200:
-                print(f"Request Error {resp.status_code} for {name_pt}")
                 continue
-            agent_detail.append(resp.json())
+
+            detail_obj = resp.json()
         except Exception as e:
             print("Error fetching detail:", e)
             continue
+
+        agent_detail = filter_agent_by_company(detail_obj, "AIA")
 
         time.sleep(0.5)
 
@@ -71,9 +92,7 @@ def fetch_agent_detail(letter, category):
     with open(output_file, "w", encoding="utf-8") as f:
         json.dump(agent_detail, f, ensure_ascii=False, indent=2)
 
-    print(
-        f"Letter {letter} saved {len(agent_detail)} records, skipped {agent_skipped} records"
-    )
+    print(f"Letter {letter} saved {len(agent_detail)} records")
 
 
 if __name__ == "__main__":
