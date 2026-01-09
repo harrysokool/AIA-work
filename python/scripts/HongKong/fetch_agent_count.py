@@ -1,13 +1,48 @@
 import requests
 from pathlib import Path
 import json
-import sys
 import time
 
 
-def fetch_agent(sessionToken):
+# status must be either a, i, all, no other option
+def check_status(status):
+    if status not in {"a", "i", "all"}:
+        return False
+    return True
+
+
+# this will count agent where their lastname prefix with prefix
+def count_agent(obj, prefix):
+    if not obj:
+        return 0
+
+    prefixLength = len(prefix)
+    agent_count = 0
+    agent_skipped = 0
+    agents = obj.get("data", [])
+
+    for agent in agents:
+        lastname = agent.get("engName", "").lower()
+        if lastname and lastname[:prefixLength] == prefix:
+            agent_count += 1
+        else:
+            agent_skipped += 1
+
+    return (agent_count, agent_skipped)
+
+
+def fetch_agent(sessionToken, status):
     s = requests.Session()
     print("session created!")
+
+    status = status.strip().lower()
+    if not check_status(status):
+        print("Invalid status input")
+        return
+    if len(status) == 1:
+        status = status.upper()
+    else:
+        status = status.lower()
 
     # url for searching the agents
     BASE_URL = "https://iir.ia.org.hk/IISPublicRegisterRestfulAPI/v1/search"
@@ -48,7 +83,11 @@ def fetch_agent(sessionToken):
 
         try:
             resp = s.get(
-                f"{BASE_URL}/individual", params=params, headers=headers, timeout=30
+                f"{BASE_URL}/individual",
+                params=params,
+                headers=headers,
+                timeout=30,
+                verify=False,
             )
             if resp.status_code != 200:
                 print(f"Failed for {letter}: {resp.status_code}")
@@ -58,15 +97,7 @@ def fetch_agent(sessionToken):
             print("Error", e)
             continue
 
-        agentCount = 0
-        agentSkipped = 0
-        for agent in obj.get("data", []):
-            name = agent.get("engName", "").lower()
-            if name and name[0] == letter:
-                agentCount += 1
-            else:
-                agentSkipped += 1
-
+        agentCount, agentSkipped = count_agent(obj, letter)
         agentDict[letter] = agentCount
         totalActiveAgentCount += agentCount
 
@@ -83,10 +114,10 @@ def fetch_agent(sessionToken):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("Usage: python fetch_agents.py <token>")
-        sys.exit(1)
+    token = input("Enter Token: ")
+    status = input("Enter Licence Status (a: Active, i: inactive, all: all): ")
+
     tic = time.perf_counter()
-    fetch_agent(sys.argv[1])
+    fetch_agent(token, status)
     toc = time.perf_counter()
     print(f"total time took: {toc - tic:0.4f}")
