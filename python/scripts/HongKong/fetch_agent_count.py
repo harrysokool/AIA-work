@@ -37,7 +37,9 @@ def fetch_agent(sessionToken):
 
     # directory/file paths
     BASE_DIR = Path(__file__).resolve().parent.parent.parent
-    ALL_FILE = BASE_DIR / "data" / "agents" / "hongkong" / "agents_all_count.json"
+    DATA_DIR = BASE_DIR / "data" / "agents" / "hongkong"
+    ALL_FILE = DATA_DIR / "agents_all_count.json"
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
 
     totalActiveAgentCount = 0
     agentDict = {}

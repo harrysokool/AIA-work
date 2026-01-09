@@ -9,7 +9,9 @@ import json
 import sys
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
-ALL_FILE = BASE_DIR / "data" / "agents" / "hongkong" / "agents_all_count.json"
+DATA_DIR = BASE_DIR / "data" / "agents" / "hongkong"
+ALL_FILE = DATA_DIR / "agents_all_count.json"
+DATA_DIR.mkdir(parents=True, exist_ok=True)
 BASE_URL = "https://iir.ia.org.hk/IISPublicRegisterRestfulAPI/v1/search"
 
 BASE_PARAMS = {
@@ -69,7 +71,11 @@ def count_letter(session, token, letter, attempts=6):
 
         try:
             resp = session.get(
-                f"{BASE_URL}/individual", params=params, headers=HEADERS, timeout=30
+                f"{BASE_URL}/individual",
+                params=params,
+                headers=HEADERS,
+                timeout=30,
+                verify=False,
             )
 
             if resp.status_code in (401, 403):
@@ -142,6 +148,6 @@ if __name__ == "__main__":
         print("Usage: python fetch_agents.py <token>")
         sys.exit(1)
     tic = time.perf_counter()
-    fetch_agent(sys.argv[1], max_workers=20)
+    fetch_agent(sys.argv[1], max_workers=10)
     toc = time.perf_counter()
     print(f"total time took: {toc - tic:0.4f}")
