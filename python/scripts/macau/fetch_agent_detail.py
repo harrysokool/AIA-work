@@ -8,28 +8,8 @@ import csv
 DETAIL_URL = "https://iiep.amcm.gov.mo/platform-enquiry-service/public/api/v1/web/enquiry/licenses/detail"
 
 
-def check_letter(letter: str) -> bool:
-    return len(letter) == 1 and letter in "abcdefghijklmnopqrstuvwxyz"
-
-
 def check_category(category: str) -> bool:
     return category in {"aps", "ang"}
-
-
-def filter_agent_by_letter(agents, letter):
-    if not agents:
-        return ([], 0)
-
-    filtered_agents = []
-    skipped = 0
-    for agent in agents:
-        lastname = (agent.get("namePt") or "").strip().lower()
-        if lastname and lastname[0] == letter:
-            filtered_agents.append(agent)
-        else:
-            skipped += 1
-
-    return (filtered_agents, skipped)
 
 
 def agent_has_company(detail_agent: dict, company: str) -> bool:
@@ -110,21 +90,15 @@ def write_csv(rows, filepath: Path):
     print(f"CSV written: {filepath}")
 
 
-def fetch_agent_detail_and_export(letter: str, category: str, company: str = "AIA"):
-    letter = letter.strip().lower()
+def fetch_agent_detail_and_export(category: str, company: str = "AIA"):
     category = category.strip().lower()
     company = company.strip()
 
-    if not check_letter(letter):
-        print("Invalid letter input")
-        return
     if not check_category(category):
         print("Invalid category input")
         return
 
-    print(
-        f"Fetching agent details for letter: {letter} (category={category}, company={company})"
-    )
+    print(f"Fetching agent details (category={category}, company={company})")
 
     s = requests.Session()
     s.headers.update(
@@ -144,7 +118,7 @@ def fetch_agent_detail_and_export(letter: str, category: str, company: str = "AI
     PROCESSED_DATA_DIR.mkdir(parents=True, exist_ok=True)
     EXPORT_DIR.mkdir(parents=True, exist_ok=True)
 
-    raw_file = RAW_DATA_DIR / f"{letter}.json"
+    raw_file = RAW_DATA_DIR / "all.json"
     try:
         with open(raw_file, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -155,13 +129,11 @@ def fetch_agent_detail_and_export(letter: str, category: str, company: str = "AI
     agents = data.get("content", [])
     agent_skipped = 0
 
-    valid_agents, skipped = filter_agent_by_letter(agents, letter)
-    agent_skipped += skipped
-
     detail_agents = []
     seen_license = set()
 
-    for agent in valid_agents:
+    for agent in agents:
+        print(f"fetchin {agent.get("namePt")} detail")
         licenseCategory = agent.get("licenseCategory", "")
         license_no = agent.get("licenseNo", "")
 
@@ -199,14 +171,14 @@ def fetch_agent_detail_and_export(letter: str, category: str, company: str = "AI
         time.sleep(0.5)
 
     # Save processed JSON (detail objects)
-    processed_file = PROCESSED_DATA_DIR / f"{letter}_{company}.json"
+    processed_file = PROCESSED_DATA_DIR / f"all_{company}.json"
     with open(processed_file, "w", encoding="utf-8") as f:
         json.dump(detail_agents, f, ensure_ascii=False, indent=2)
     print(f"Processed JSON written: {processed_file}")
 
     # Export CSV for Excel
     rows = flatten_agents_for_excel(detail_agents)
-    csv_file = EXPORT_DIR / f"{letter}_{company}.csv"
+    csv_file = EXPORT_DIR / f"all_{company}.csv"
     write_csv(rows, csv_file)
 
     print(
@@ -215,11 +187,10 @@ def fetch_agent_detail_and_export(letter: str, category: str, company: str = "AI
 
 
 if __name__ == "__main__":
-    letter = input("Enter letter: ")
     category = input("Enter category (aps, ang): ")
     company = input("Enter company prefix (e.g., AIA): ").strip() or "AIA"
 
     tic = time.perf_counter()
-    fetch_agent_detail_and_export(letter, category, company)
+    fetch_agent_detail_and_export(category, company)
     toc = time.perf_counter()
     print(f"Time took: {toc - tic:0.4f}s")
