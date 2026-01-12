@@ -14,7 +14,7 @@ def check_status(status):
 # this will count agent where their lastname prefix with prefix
 def count_agent(obj, prefix):
     if not obj:
-        return 0
+        return (0, 0)
 
     prefixLength = len(prefix)
     agent_count = 0
@@ -48,7 +48,7 @@ def fetch_agent(sessionToken, status):
     BASE_URL = "https://iir.ia.org.hk/IISPublicRegisterRestfulAPI/v1/search"
 
     # variables
-    alphabets = "abcdefghijklmnopqrstuvwxyz"
+    alphabets = "abcdefghijklmnopqrstuvwxyz".upper()
     token = sessionToken
 
     # need to loop through the alphabet letters for the first name
@@ -56,13 +56,14 @@ def fetch_agent(sessionToken, status):
     # other params are fixed
     params = {
         "seachIndicator": "engName",
-        "status": "A",
+        "status": status,
         "surNameValue": "",
         "givenNameValue": "",
         "page": 1,
         "pagesize": 1000,
         "token": token,
     }
+
     headers = {
         "Accept": "application/json",
         "Referer": "https://iir.ia.org.hk/",
@@ -78,6 +79,7 @@ def fetch_agent(sessionToken, status):
 
     totalActiveAgentCount = 0
     agentDict = {}
+
     for letter in alphabets:
         params["surNameValue"] = letter
 
@@ -89,9 +91,11 @@ def fetch_agent(sessionToken, status):
                 timeout=30,
                 verify=False,
             )
+
             if resp.status_code != 200:
                 print(f"Failed for {letter}: {resp.status_code}")
                 continue
+
             obj = resp.json()
         except Exception as e:
             print("Error", e)

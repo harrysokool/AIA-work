@@ -7,6 +7,10 @@ import random
 from pathlib import Path
 import json
 import sys
+import urllib3
+
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 DATA_DIR = BASE_DIR / "data" / "agents" / "hongkong"
@@ -16,19 +20,26 @@ BASE_URL = "https://iir.ia.org.hk/IISPublicRegisterRestfulAPI/v1/search"
 
 BASE_PARAMS = {
     "seachIndicator": "engName",
-    "status": "A",
+    "status": "",
     "surNameValue": "",
     "givenNameValue": "",
     "page": 1,
     "pagesize": 1000,
     "token": "",
 }
+
 HEADERS = {
     "Accept": "application/json",
     "Referer": "https://iir.ia.org.hk/",
     "User-Agent": "Mozilla/5.0",
     "Accept-Language": "en-US,en;q=0.9",
 }
+
+
+def check_status(status):
+    if status not in {"a", "i", "all"}:
+        return False
+    return True
 
 
 def make_session():
@@ -59,10 +70,31 @@ def safe_json(resp, letter):
         raise
 
 
-def count_letter(session, token, letter, attempts=6):
+def count_agent(obj, letter):
+    if not obj:
+        return (0, 0)
+
+    agent_count = 0
+    agent_skipped = 0
+    agents = obj.get("data", [])
+    if len(agents) >= 1000:
+        print(letter, "is more than 1000")
+
+    for agent in agents:
+        lastname = agent.get("engName", "").lower()
+        if lastname and lastname[0] == letter:
+            agent_count += 1
+        else:
+            agent_skipped += 1
+
+    return (agent_count, agent_skipped)
+
+
+def count_letter(session, token, letter, status, attempts=6):
     params = dict(BASE_PARAMS)
     params["token"] = token
     params["surNameValue"] = letter
+    params["status"] = status
 
     last_err = None
     for i in range(attempts):
@@ -93,14 +125,7 @@ def count_letter(session, token, letter, attempts=6):
             resp.raise_for_status()
             obj = resp.json()  # may raise -> retry
 
-            agentCount = 0
-            agentSkipped = 0
-            for agent in obj.get("data", []):
-                name = agent.get("engName", "")
-                if name and name[0].lower() == letter:
-                    agentCount += 1
-                else:
-                    agentSkipped += 1
+            agentCount, agentSkipped = count_agent(obj, letter)
 
             print(f"Letter {letter} saved {agentCount} records, skipped {agentSkipped}")
             return letter, agentCount
@@ -113,7 +138,16 @@ def count_letter(session, token, letter, attempts=6):
     return letter, 0
 
 
-def fetch_agent(token, max_workers=6):
+def fetch_agent(token, status, max_workers=6):
+    status = status.strip().lower()
+    if not check_status(status):
+        print("Invalid status input")
+        return
+    if len(status) == 1:
+        status = status.upper()
+    else:
+        status = status.lower()
+
     total = 0
     agentDict = {}
 
@@ -125,7 +159,7 @@ def fetch_agent(token, max_workers=6):
         futures = []
         for i, letter in enumerate(letters):
             sess = sessions[i % max_workers]
-            futures.append(pool.submit(count_letter, sess, token, letter))
+            futures.append(pool.submit(count_letter, sess, token, letter, status))
 
         for f in as_completed(futures):
             try:
@@ -144,10 +178,11 @@ def fetch_agent(token, max_workers=6):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("Usage: python fetch_agents.py <token>")
+    if len(sys.argv) < 3:
+        print("Usage: python fetch_agent_count_threads.py <token> <status>")
         sys.exit(1)
+
     tic = time.perf_counter()
-    fetch_agent(sys.argv[1], max_workers=10)
+    fetch_agent(sys.argv[1], sys.argv[2], max_workers=10)
     toc = time.perf_counter()
     print(f"total time took: {toc - tic:0.4f}")
