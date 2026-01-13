@@ -5,12 +5,18 @@ import time
 import csv
 import asyncio
 import aiohttp
+import random
+
+SEM = asyncio.Semaphore(20)
 
 # URL
 DETAIL_URL = "https://iiep.amcm.gov.mo/platform-enquiry-service/public/api/v1/web/enquiry/licenses/detail"
+
 HEADERS = {
     "Accept": "application/json",
-    "User-Agent": "Mozilla/5.0 (compatible; MyApp/1.0)",
+    "User-Agent": "Mozilla/5.0",
+    "Origin": "https://iiep.amcm.gov.mo",
+    "Referer": "https://iiep.amcm.gov.mo/",
 }
 
 
@@ -25,7 +31,6 @@ def load_raw_data(raw_file):
     except Exception as e:
         print("Error reading raw file:", e)
         return None
-
     return data
 
 
@@ -38,7 +43,7 @@ def agent_has_company(detail_agent: dict, company: str) -> bool:
     return False
 
 
-def extract_detial_params(agents):
+def extract_detail_params(agents):
     if not agents:
         return None
 
@@ -59,31 +64,36 @@ def extract_detial_params(agents):
 
 
 async def fetch(session, param, company):
-    try:
-        async with session.get(DETAIL_URL, params=param, headers=HEADERS) as response:
-            if response.status != 200:
-                text = await response.text()
-                print(f"Error {response.status} for {param}: {text[:200]}...")
-                return None
+    async with SEM:
+        await asyncio.sleep(0.3 + random.random() * 0.7)
+        try:
+            print("getting detail for:", param)
+            async with session.get(
+                DETAIL_URL, params=param, headers=HEADERS
+            ) as response:
+                if response.status != 200:
+                    text = await response.text()
+                    print(f"Error {response.status} for {param}: {text[:200]}...")
+                    return None
 
-            if "application/json" not in response.headers.get("Content-Type", ""):
-                text = await response.text()
-                print(
-                    f"Unexpected content type for {param}: {response.headers.get('Content-Type')}"
-                )
-                print(f"Response preview: {text[:200]}...")
-                return None
+                if "application/json" not in response.headers.get("Content-Type", ""):
+                    text = await response.text()
+                    print(
+                        f"Unexpected content type for {param}: {response.headers.get('Content-Type')}"
+                    )
+                    print(f"Response preview: {text[:200]}...")
+                    return None
 
-            detail = await response.json()
+                detail = await response.json()
 
-            if agent_has_company(detail, company):
-                return detail
-            else:
-                return None
+                if agent_has_company(detail, company):
+                    return detail
+                else:
+                    return None
 
-    except Exception as e:
-        print(f"Error fetching {param}: {e}")
-        return None
+        except Exception as e:
+            print(f"Error fetching {param}: {e}")
+            return None
 
 
 def flatten_agents_for_excel(detail_agents):
@@ -135,7 +145,6 @@ def flatten_agents_for_excel(detail_agents):
                         "associationDate": item.get("aDate"),
                     }
                 )
-
     return rows
 
 
@@ -183,10 +192,11 @@ async def fetch_agent_detail_and_export(category: str, company: str = "AIA"):
 
     agents = data.get("content", [])
     detail_agents = []
-    detail_params = extract_detial_params(agents)
+    detail_params = extract_detail_params(agents)
 
-    async with aiohttp.ClientSession() as session:
-        tasks = [fetch(session, param, company) for param in detail_params[:10]]
+    connector = aiohttp.TCPConnector(limit=5, force_close=False)
+    async with aiohttp.ClientSession(connector=connector) as session:
+        tasks = [fetch(session, param, company) for param in detail_params]
         results = await asyncio.gather(*tasks)
 
     detail_agents = [r for r in results if r is not None]
