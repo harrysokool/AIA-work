@@ -3,9 +3,15 @@ import requests
 from pathlib import Path
 import time
 import csv
+import asyncio
+import aiohttp
 
 # URL
 DETAIL_URL = "https://iiep.amcm.gov.mo/platform-enquiry-service/public/api/v1/web/enquiry/licenses/detail"
+HEADERS = {
+    "Accept": "application/json",
+    "User-Agent": "Mozilla/5.0 (compatible; MyApp/1.0)",
+}
 
 
 def check_category(category: str) -> bool:
@@ -23,7 +29,27 @@ def load_raw_data(raw_file):
     return data
 
 
-def extract_detail_params(agent):
+def extract_detial_params(agents):
+    if not agents:
+        return None
+
+    detail_params = []
+    for agent in agents:
+        if not agent:
+            continue
+
+        licenseCategory = agent.get("licenseCategory", "")
+        license_no = agent.get("licenseNo", "")
+
+        if not licenseCategory or not license_no:
+            continue
+
+        detail_params.append({"category": licenseCategory, "no": license_no})
+
+    return detail_params
+
+
+def extract_detail_param(agent):
     if not agent:
         return None
 
@@ -36,6 +62,38 @@ def extract_detail_params(agent):
     detail_params = {"category": licenseCategory, "no": license_no}
 
     return detail_params
+
+
+async def fetch(session, param, company):
+    try:
+        async with session.get(DETAIL_URL, params=param, headers=HEADERS) as response:
+            # Check if request was successful
+            if response.status != 200:
+                text = await response.text()
+                print(f"Error {response.status} for {param}: {text[:200]}...")
+                return None
+
+            # Check if content type is JSON
+            if "application/json" not in response.headers.get("Content-Type", ""):
+                text = await response.text()
+                print(
+                    f"Unexpected content type for {param}: {response.headers.get('Content-Type')}"
+                )
+                print(f"Response preview: {text[:200]}...")
+                return None
+
+            # Parse JSON safely
+            detail = await response.json()
+
+            # Apply your filter
+            if agent_has_company(detail, company):
+                return detail
+            else:
+                return None
+
+    except Exception as e:
+        print(f"Error fetching {param}: {e}")
+        return None
 
 
 def load_agent_detail(s, detail_params, company):
@@ -136,7 +194,7 @@ def write_csv(rows, filepath: Path):
     print(f"CSV written: {filepath}")
 
 
-def fetch_agent_detail_and_export(category: str, company: str = "AIA"):
+async def fetch_agent_detail_and_export(category: str, company: str = "AIA"):
     category = category.strip().lower()
     company = company.strip()
 
@@ -171,40 +229,49 @@ def fetch_agent_detail_and_export(category: str, company: str = "AIA"):
         return
 
     agents = data.get("content", [])
-    agent_skipped = 0
+    # agent_skipped = 0
     detail_agents = []
 
-    for agent in agents:
-        print(f"fetchin {agent.get("namePt")} detail")
-        detail_params = extract_detail_params(agent)
-        if detail_params is None:
-            agent_skipped += 1
-            continue
+    detail_params = extract_detial_params(agents)
 
-        detail = load_agent_detail(s, detail_params, company)
-        if detail is None:
-            agent_skipped += 1
-            continue
+    async with aiohttp.ClientSession() as session:
+        tasks = [fetch(session, param, company) for param in detail_params]
+        results = await asyncio.gather(*tasks)
 
-        detail_agents.append(detail)
-        print(detail)
+    detail_agents = [r for r in results if r is not None]
+    print(detail_agents)
 
-        time.sleep(0.5)
+    # for agent in agents:
+    #     print(f"fetchin {agent.get("namePt")} detail")
+    #     detail_param = extract_detail_param(agent)
+    #     if detail_param is None:
+    #         agent_skipped += 1
+    #         continue
 
-    # Save processed JSON (detail objects)
-    processed_file = PROCESSED_DATA_DIR / f"all_{company}.json"
-    with open(processed_file, "w", encoding="utf-8") as f:
-        json.dump(detail_agents, f, ensure_ascii=False, indent=2)
-    print(f"Processed JSON written: {processed_file}")
+    #     detail = load_agent_detail(s, detail_param, company)
+    #     if detail is None:
+    #         agent_skipped += 1
+    #         continue
 
-    # Export CSV for Excel
-    rows = flatten_agents_for_excel(detail_agents)
-    csv_file = EXPORT_DIR / f"all_{company}.csv"
-    write_csv(rows, csv_file)
+    #     detail_agents.append(detail)
+    #     print(detail)
 
-    print(
-        f"Done. Matched {len(detail_agents)} agents, exported {len(rows)} rows, skipped {agent_skipped}."
-    )
+    #     time.sleep(0.5)
+
+    # # Save processed JSON (detail objects)
+    # processed_file = PROCESSED_DATA_DIR / f"all_{company}.json"
+    # with open(processed_file, "w", encoding="utf-8") as f:
+    #     json.dump(detail_agents, f, ensure_ascii=False, indent=2)
+    # print(f"Processed JSON written: {processed_file}")
+
+    # # Export CSV for Excel
+    # rows = flatten_agents_for_excel(detail_agents)
+    # csv_file = EXPORT_DIR / f"all_{company}.csv"
+    # write_csv(rows, csv_file)
+
+    # print(
+    #     f"Done. Matched {len(detail_agents)} agents, exported {len(rows)} rows, skipped {agent_skipped}."
+    # )
 
 
 if __name__ == "__main__":
@@ -212,6 +279,6 @@ if __name__ == "__main__":
     company = input("Enter company prefix (e.g., AIA): ").strip() or "AIA"
 
     tic = time.perf_counter()
-    fetch_agent_detail_and_export(category, company)
+    asyncio.run(fetch_agent_detail_and_export(category, company))
     toc = time.perf_counter()
     print(f"Time took: {toc - tic:0.4f}s")
