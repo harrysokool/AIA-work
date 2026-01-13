@@ -29,6 +29,15 @@ def load_raw_data(raw_file):
     return data
 
 
+def agent_has_company(detail_agent: dict, company: str) -> bool:
+    for corp in detail_agent.get("corporates") or []:
+        for item in corp.get("items") or []:
+            nameEn = item.get("nameEn") or ""
+            if nameEn.startswith(company):
+                return True
+    return False
+
+
 def extract_detial_params(agents):
     if not agents:
         return None
@@ -49,31 +58,14 @@ def extract_detial_params(agents):
     return detail_params
 
 
-def extract_detail_param(agent):
-    if not agent:
-        return None
-
-    licenseCategory = agent.get("licenseCategory", "")
-    license_no = agent.get("licenseNo", "")
-
-    if not licenseCategory or not license_no:
-        return None
-
-    detail_params = {"category": licenseCategory, "no": license_no}
-
-    return detail_params
-
-
 async def fetch(session, param, company):
     try:
         async with session.get(DETAIL_URL, params=param, headers=HEADERS) as response:
-            # Check if request was successful
             if response.status != 200:
                 text = await response.text()
                 print(f"Error {response.status} for {param}: {text[:200]}...")
                 return None
 
-            # Check if content type is JSON
             if "application/json" not in response.headers.get("Content-Type", ""):
                 text = await response.text()
                 print(
@@ -82,10 +74,8 @@ async def fetch(session, param, company):
                 print(f"Response preview: {text[:200]}...")
                 return None
 
-            # Parse JSON safely
             detail = await response.json()
 
-            # Apply your filter
             if agent_has_company(detail, company):
                 return detail
             else:
@@ -94,35 +84,6 @@ async def fetch(session, param, company):
     except Exception as e:
         print(f"Error fetching {param}: {e}")
         return None
-
-
-def load_agent_detail(s, detail_params, company):
-    if not s or not detail_params:
-        return None
-
-    try:
-        resp = s.get(DETAIL_URL, params=detail_params, timeout=10)
-        if resp.status_code != 200:
-            return None
-
-        detail = resp.json()
-
-        if agent_has_company(detail, company):
-            return detail
-        else:
-            return None
-    except Exception as e:
-        print("Error fetching detail:", e)
-        return None
-
-
-def agent_has_company(detail_agent: dict, company: str) -> bool:
-    for corp in detail_agent.get("corporates") or []:
-        for item in corp.get("items") or []:
-            nameEn = item.get("nameEn") or ""
-            if nameEn.startswith(company):
-                return True
-    return False
 
 
 def flatten_agents_for_excel(detail_agents):
@@ -204,14 +165,6 @@ async def fetch_agent_detail_and_export(category: str, company: str = "AIA"):
 
     print(f"Fetching agent details (category={category}, company={company})")
 
-    s = requests.Session()
-    s.headers.update(
-        {
-            "User-Agent": "MyApp/1.0",
-            "Accept": "application/json",
-        }
-    )
-
     BASE_DIR = Path(__file__).resolve().parent.parent.parent
     MACAU_DATA_DIR = BASE_DIR / "data" / "agents" / "macau"
     RAW_DATA_DIR = MACAU_DATA_DIR / category / "raw_agent_data"
@@ -229,49 +182,27 @@ async def fetch_agent_detail_and_export(category: str, company: str = "AIA"):
         return
 
     agents = data.get("content", [])
-    # agent_skipped = 0
     detail_agents = []
-
     detail_params = extract_detial_params(agents)
 
     async with aiohttp.ClientSession() as session:
-        tasks = [fetch(session, param, company) for param in detail_params]
+        tasks = [fetch(session, param, company) for param in detail_params[:10]]
         results = await asyncio.gather(*tasks)
 
     detail_agents = [r for r in results if r is not None]
-    print(detail_agents)
 
-    # for agent in agents:
-    #     print(f"fetchin {agent.get("namePt")} detail")
-    #     detail_param = extract_detail_param(agent)
-    #     if detail_param is None:
-    #         agent_skipped += 1
-    #         continue
+    # Save processed JSON (detail objects)
+    processed_file = PROCESSED_DATA_DIR / f"all_{company}.json"
+    with open(processed_file, "w", encoding="utf-8") as f:
+        json.dump(detail_agents, f, ensure_ascii=False, indent=2)
+    print(f"Processed JSON written: {processed_file}")
 
-    #     detail = load_agent_detail(s, detail_param, company)
-    #     if detail is None:
-    #         agent_skipped += 1
-    #         continue
+    # Export CSV for Excel
+    rows = flatten_agents_for_excel(detail_agents)
+    csv_file = EXPORT_DIR / f"all_{company}.csv"
+    write_csv(rows, csv_file)
 
-    #     detail_agents.append(detail)
-    #     print(detail)
-
-    #     time.sleep(0.5)
-
-    # # Save processed JSON (detail objects)
-    # processed_file = PROCESSED_DATA_DIR / f"all_{company}.json"
-    # with open(processed_file, "w", encoding="utf-8") as f:
-    #     json.dump(detail_agents, f, ensure_ascii=False, indent=2)
-    # print(f"Processed JSON written: {processed_file}")
-
-    # # Export CSV for Excel
-    # rows = flatten_agents_for_excel(detail_agents)
-    # csv_file = EXPORT_DIR / f"all_{company}.csv"
-    # write_csv(rows, csv_file)
-
-    # print(
-    #     f"Done. Matched {len(detail_agents)} agents, exported {len(rows)} rows, skipped {agent_skipped}."
-    # )
+    print(f"Done. Matched {len(detail_agents)} agents, exported {len(rows)} rows")
 
 
 if __name__ == "__main__":
