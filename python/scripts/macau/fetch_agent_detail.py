@@ -12,6 +12,52 @@ def check_category(category: str) -> bool:
     return category in {"aps", "ang"}
 
 
+def load_raw_data(raw_file):
+    try:
+        with open(raw_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception as e:
+        print("Error reading raw file:", e)
+        return None
+
+    return data
+
+
+def extract_detail_params(agent):
+    if not agent:
+        return None
+
+    licenseCategory = agent.get("licenseCategory", "")
+    license_no = agent.get("licenseNo", "")
+
+    if not licenseCategory or not license_no:
+        return None
+
+    detail_params = {"category": licenseCategory, "no": license_no}
+
+    return detail_params
+
+
+def load_agent_detail(s, detail_params, company):
+    if not s or not detail_params:
+        return None
+
+    try:
+        resp = s.get(DETAIL_URL, params=detail_params, timeout=10)
+        if resp.status_code != 200:
+            return None
+
+        detail = resp.json()
+
+        if agent_has_company(detail, company):
+            return detail
+        else:
+            return None
+    except Exception as e:
+        print("Error fetching detail:", e)
+        return None
+
+
 def agent_has_company(detail_agent: dict, company: str) -> bool:
     for corp in detail_agent.get("corporates") or []:
         for item in corp.get("items") or []:
@@ -110,8 +156,8 @@ def fetch_agent_detail_and_export(category: str, company: str = "AIA"):
 
     BASE_DIR = Path(__file__).resolve().parent.parent.parent
     MACAU_DATA_DIR = BASE_DIR / "data" / "agents" / "macau"
-    RAW_DATA_DIR = MACAU_DATA_DIR / category / "raw_agent_data_by_letter"
-    PROCESSED_DATA_DIR = MACAU_DATA_DIR / category / "processed_agent_data_by_letter"
+    RAW_DATA_DIR = MACAU_DATA_DIR / category / "raw_agent_data"
+    PROCESSED_DATA_DIR = MACAU_DATA_DIR / category / "processed_agent_data"
     EXPORT_DIR = MACAU_DATA_DIR / category / "exports"
 
     RAW_DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -119,54 +165,29 @@ def fetch_agent_detail_and_export(category: str, company: str = "AIA"):
     EXPORT_DIR.mkdir(parents=True, exist_ok=True)
 
     raw_file = RAW_DATA_DIR / "all.json"
-    try:
-        with open(raw_file, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except Exception as e:
-        print("Error reading raw file:", e)
+
+    data = load_raw_data(raw_file)
+    if data is None:
         return
 
     agents = data.get("content", [])
     agent_skipped = 0
-
     detail_agents = []
-    seen_license = set()
 
     for agent in agents:
         print(f"fetchin {agent.get("namePt")} detail")
-        licenseCategory = agent.get("licenseCategory", "")
-        license_no = agent.get("licenseNo", "")
-
-        if not licenseCategory or not license_no:
+        detail_params = extract_detail_params(agent)
+        if detail_params is None:
             agent_skipped += 1
             continue
 
-        # avoid duplicate detail fetch
-        key = (licenseCategory, license_no)
-        if key in seen_license:
-            continue
-        seen_license.add(key)
-
-        detail_params = {"category": licenseCategory, "no": license_no}
-
-        try:
-            resp = s.get(DETAIL_URL, params=detail_params, timeout=10)
-            if resp.status_code != 200:
-                agent_skipped += 1
-                continue
-
-            detail = resp.json()
-
-            # keep only agents matching company
-            if agent_has_company(detail, company):
-                detail_agents.append(detail)
-            else:
-                agent_skipped += 1
-
-        except Exception as e:
-            print("Error fetching detail:", e)
+        detail = load_agent_detail(s, detail_params, company)
+        if detail is None:
             agent_skipped += 1
             continue
+
+        detail_agents.append(detail)
+        print(detail)
 
         time.sleep(0.5)
 
