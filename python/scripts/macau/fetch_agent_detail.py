@@ -7,10 +7,10 @@ import asyncio
 import aiohttp
 import random
 
-SEM = asyncio.Semaphore(20)
-
-# URL
 DETAIL_URL = "https://iiep.amcm.gov.mo/platform-enquiry-service/public/api/v1/web/enquiry/licenses/detail"
+CONCURRECY_LIMIT = 20
+MAX_RETRIES = 5
+SEM = asyncio.Semaphore(CONCURRECY_LIMIT)
 
 HEADERS = {
     "Accept": "application/json",
@@ -64,36 +64,54 @@ def extract_detail_params(agents):
 
 
 async def fetch(session, param, company):
+    try:
+        print("getting detail for:", param)
+        async with session.get(DETAIL_URL, params=param, headers=HEADERS) as response:
+            if response.status != 200:
+                text = await response.text()
+                print(f"Error {response.status} for {param}: {text[:200]}...")
+                return None
+
+            if "application/json" not in response.headers.get("Content-Type", ""):
+                text = await response.text()
+                print(
+                    f"Unexpected content type for {param}: {response.headers.get('Content-Type')}"
+                )
+                print(f"Response preview: {text[:200]}...")
+                return None
+
+            detail = await response.json()
+
+            if agent_has_company(detail, company):
+                return detail
+            else:
+                return None
+
+    except Exception as e:
+        print(f"Error fetching {param}: {e}")
+        return None
+
+
+async def fetch_with_retry(session, param, company, retries=MAX_RETRIES):
     async with SEM:
         await asyncio.sleep(0.3 + random.random() * 0.7)
-        try:
-            print("getting detail for:", param)
-            async with session.get(
-                DETAIL_URL, params=param, headers=HEADERS
-            ) as response:
-                if response.status != 200:
-                    text = await response.text()
-                    print(f"Error {response.status} for {param}: {text[:200]}...")
-                    return None
-
-                if "application/json" not in response.headers.get("Content-Type", ""):
-                    text = await response.text()
-                    print(
-                        f"Unexpected content type for {param}: {response.headers.get('Content-Type')}"
-                    )
-                    print(f"Response preview: {text[:200]}...")
-                    return None
-
-                detail = await response.json()
-
-                if agent_has_company(detail, company):
-                    return detail
+        for attempt in range(1, retries + 1):
+            try:
+                await asyncio.sleep(random.uniform(0.5, 1.5))
+                return await fetch(session, param, company)
+            except (
+                aiohttp.ClientOSError,
+                aiohttp.ClientResponseError,
+                ConnectionResetError,
+            ) as e:
+                print(f"[Attempt {attempt}] Error fetching {param}: {e}")
+                if attempt < retries:
+                    wait_time = (2 ** (attempt - 1)) + random.uniform(0, 0.5)
+                    print(f"Retrying in {wait_time:.2f} seconds...")
+                    await asyncio.sleep(wait_time)
                 else:
+                    print(f"Failed after {retries} attempts for {param}")
                     return None
-
-        except Exception as e:
-            print(f"Error fetching {param}: {e}")
-            return None
 
 
 def flatten_agents_for_excel(detail_agents):
