@@ -1,14 +1,14 @@
 import json
-import requests
 from pathlib import Path
 import time
 import csv
 import asyncio
 import aiohttp
 import random
+import threading
 
 DETAIL_URL = "https://iiep.amcm.gov.mo/platform-enquiry-service/public/api/v1/web/enquiry/licenses/detail"
-CONCURRECY_LIMIT = 20
+CONCURRECY_LIMIT = 5
 MAX_RETRIES = 5
 SEM = asyncio.Semaphore(CONCURRECY_LIMIT)
 
@@ -18,6 +18,14 @@ HEADERS = {
     "Origin": "https://iiep.amcm.gov.mo",
     "Referer": "https://iiep.amcm.gov.mo/",
 }
+
+
+def timer():
+    counter = 1
+    while True:
+        time.sleep(1)
+        print(counter)
+        counter += 1
 
 
 def check_category(category: str) -> bool:
@@ -34,11 +42,11 @@ def load_raw_data(raw_file):
     return data
 
 
-def agent_has_company(detail_agent: dict, company: str) -> bool:
+def agent_has_company(detail_agent: dict, company_list: set) -> bool:
     for corp in detail_agent.get("corporates") or []:
         for item in corp.get("items") or []:
             nameEn = item.get("nameEn") or ""
-            if nameEn.startswith(company):
+            if nameEn in company_list:
                 return True
     return False
 
@@ -63,9 +71,8 @@ def extract_detail_params(agents):
     return detail_params
 
 
-async def fetch(session, param, company):
+async def fetch(session, param, company_list):
     try:
-        print("getting detail for:", param)
         async with session.get(DETAIL_URL, params=param, headers=HEADERS) as response:
             if response.status != 200:
                 text = await response.text()
@@ -82,7 +89,7 @@ async def fetch(session, param, company):
 
             detail = await response.json()
 
-            if agent_has_company(detail, company):
+            if agent_has_company(detail, company_list):
                 return detail
             else:
                 return None
@@ -92,13 +99,13 @@ async def fetch(session, param, company):
         return None
 
 
-async def fetch_with_retry(session, param, company, retries=MAX_RETRIES):
+async def fetch_with_retry(session, param, company_list, retries=MAX_RETRIES):
     async with SEM:
         await asyncio.sleep(0.3 + random.random() * 0.7)
         for attempt in range(1, retries + 1):
             try:
                 await asyncio.sleep(random.uniform(0.5, 1.5))
-                return await fetch(session, param, company)
+                return await fetch(session, param, company_list)
             except (
                 aiohttp.ClientOSError,
                 aiohttp.ClientResponseError,
@@ -182,15 +189,16 @@ def write_csv(rows, filepath: Path):
     print(f"CSV written: {filepath}")
 
 
-async def fetch_agent_detail_and_export(category: str, company: str = "AIA"):
+async def fetch_agent_detail_and_export(category: str, company_list: list[str]):
     category = category.strip().lower()
-    company = company.strip()
-
     if not check_category(category):
         print("Invalid category input")
         return
 
-    print(f"Fetching agent details (category={category}, company={company})")
+    # need to do some check on the company list
+    company_list = set(company_list)
+
+    print(f"Fetching agent details (category={category}, company={company_list})")
 
     BASE_DIR = Path(__file__).resolve().parent.parent.parent
     MACAU_DATA_DIR = BASE_DIR / "data" / "agents" / "macau"
@@ -214,20 +222,20 @@ async def fetch_agent_detail_and_export(category: str, company: str = "AIA"):
 
     connector = aiohttp.TCPConnector(limit=5, force_close=False)
     async with aiohttp.ClientSession(connector=connector) as session:
-        tasks = [fetch(session, param, company) for param in detail_params]
+        tasks = [fetch(session, param, company_list) for param in detail_params]
         results = await asyncio.gather(*tasks)
 
     detail_agents = [r for r in results if r is not None]
 
     # Save processed JSON (detail objects)
-    processed_file = PROCESSED_DATA_DIR / f"all_{company}.json"
+    processed_file = PROCESSED_DATA_DIR / f"all_{category}.json"
     with open(processed_file, "w", encoding="utf-8") as f:
         json.dump(detail_agents, f, ensure_ascii=False, indent=2)
     print(f"Processed JSON written: {processed_file}")
 
     # Export CSV for Excel
     rows = flatten_agents_for_excel(detail_agents)
-    csv_file = EXPORT_DIR / f"all_{company}.csv"
+    csv_file = EXPORT_DIR / f"all_{category}.csv"
     write_csv(rows, csv_file)
 
     print(f"Done. Matched {len(detail_agents)} agents, exported {len(rows)} rows")
@@ -235,9 +243,25 @@ async def fetch_agent_detail_and_export(category: str, company: str = "AIA"):
 
 if __name__ == "__main__":
     category = input("Enter category (aps, ang): ")
-    company = input("Enter company prefix (e.g., AIA): ").strip() or "AIA"
+    company_input = (
+        input("Enter company names separated by commas: ")
+        or "AIA INTERNATIONAL LIMITED"
+    )
+
+    company_list = [
+        company.strip().upper()
+        for company in company_input.split(",")
+        if company_input.split()
+    ]
+
+    threading.Thread(target=timer, daemon=True).start()
 
     tic = time.perf_counter()
-    asyncio.run(fetch_agent_detail_and_export(category, company))
+    asyncio.run(fetch_agent_detail_and_export(category, company_list))
     toc = time.perf_counter()
     print(f"Time took: {toc - tic:0.4f}s")
+
+
+# some company name to test
+# ASIA INSURANCE COMPANY LIMITED
+# AIA INTERNATIONAL LIMITED
