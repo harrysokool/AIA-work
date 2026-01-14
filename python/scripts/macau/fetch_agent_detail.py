@@ -8,7 +8,7 @@ import random
 import threading
 
 DETAIL_URL = "https://iiep.amcm.gov.mo/platform-enquiry-service/public/api/v1/web/enquiry/licenses/detail"
-CONCURRECY_LIMIT = 5
+CONCURRECY_LIMIT = 100
 MAX_RETRIES = 5
 SEM = asyncio.Semaphore(CONCURRECY_LIMIT)
 
@@ -36,10 +36,11 @@ def load_raw_data(raw_file):
     try:
         with open(raw_file, "r", encoding="utf-8") as f:
             data = json.load(f)
+            agents = data.get("content", [])
+            return agents if not None else None
     except Exception as e:
         print("Error reading raw file:", e)
         return None
-    return data
 
 
 def agent_has_company(detail_agent: dict, company_list: set) -> bool:
@@ -72,6 +73,7 @@ def extract_detail_params(agents):
 
 
 async def fetch(session, param, company_list):
+    print("fetching information for ", param)
     try:
         async with session.get(DETAIL_URL, params=param, headers=HEADERS) as response:
             if response.status != 200:
@@ -200,29 +202,29 @@ async def fetch_agent_detail_and_export(category: str, company_list: list[str]):
 
     print(f"Fetching agent details (category={category}, company={company_list})")
 
+    # Directories and Files
     BASE_DIR = Path(__file__).resolve().parent.parent.parent
     MACAU_DATA_DIR = BASE_DIR / "data" / "agents" / "macau"
     RAW_DATA_DIR = MACAU_DATA_DIR / category / "raw_agent_data"
     PROCESSED_DATA_DIR = MACAU_DATA_DIR / category / "processed_agent_data"
     EXPORT_DIR = MACAU_DATA_DIR / category / "exports"
-
     RAW_DATA_DIR.mkdir(parents=True, exist_ok=True)
     PROCESSED_DATA_DIR.mkdir(parents=True, exist_ok=True)
     EXPORT_DIR.mkdir(parents=True, exist_ok=True)
-
     raw_file = RAW_DATA_DIR / "all.json"
 
-    data = load_raw_data(raw_file)
-    if data is None:
+    agents = load_raw_data(raw_file)
+    if agents is None:
         return
 
-    agents = data.get("content", [])
     detail_agents = []
     detail_params = extract_detail_params(agents)
 
     connector = aiohttp.TCPConnector(limit=5, force_close=False)
     async with aiohttp.ClientSession(connector=connector) as session:
-        tasks = [fetch(session, param, company_list) for param in detail_params]
+        tasks = [
+            fetch_with_retry(session, param, company_list) for param in detail_params
+        ]
         results = await asyncio.gather(*tasks)
 
     detail_agents = [r for r in results if r is not None]
