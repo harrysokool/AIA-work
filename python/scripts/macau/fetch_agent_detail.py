@@ -6,9 +6,16 @@ import asyncio
 import aiohttp
 import random
 import threading
+import sys
+from typing import Any, Dict, List, Optional, Set
+
+
+class RetryableFetchError(Exception):
+    pass
+
 
 DETAIL_URL = "https://iiep.amcm.gov.mo/platform-enquiry-service/public/api/v1/web/enquiry/licenses/detail"
-CONCURRECY_LIMIT = 100
+CONCURRECY_LIMIT = 10
 MAX_RETRIES = 5
 SEM = asyncio.Semaphore(CONCURRECY_LIMIT)
 
@@ -32,7 +39,7 @@ def check_category(category: str) -> bool:
     return category in {"aps", "ang"}
 
 
-def load_raw_data(raw_file):
+def load_raw_data(raw_file: Path):
     try:
         with open(raw_file, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -49,6 +56,7 @@ def agent_has_company(detail_agent: dict, company_list: set) -> bool:
             nameEn = item.get("nameEn") or ""
             if nameEn in company_list:
                 return True
+
     return False
 
 
@@ -73,47 +81,42 @@ def extract_detail_params(agents):
 
 
 async def fetch(session, param, company_list):
-    print("fetching information for ", param)
     try:
         async with session.get(DETAIL_URL, params=param, headers=HEADERS) as response:
             if response.status != 200:
-                text = await response.text()
-                print(f"Error {response.status} for {param}: {text[:200]}...")
-                return None
+                raise RetryableFetchError(f"HTTP {response.status}")
 
             if "application/json" not in response.headers.get("Content-Type", ""):
-                text = await response.text()
-                print(
-                    f"Unexpected content type for {param}: {response.headers.get('Content-Type')}"
+                raise RetryableFetchError(
+                    f"Unexpected content type: {response.headers.get('Content-Type')}"
                 )
-                print(f"Response preview: {text[:200]}...")
-                return None
 
             detail = await response.json()
 
             if agent_has_company(detail, company_list):
                 return detail
             else:
-                return None
+                return False
 
+    except aiohttp.ClientError as e:
+        raise RetryableFetchError(f"Network error: {e}")
     except Exception as e:
-        print(f"Error fetching {param}: {e}")
-        return None
+        raise RetryableFetchError(f"Unexpected error: {e}")
 
 
 async def fetch_with_retry(session, param, company_list, retries=MAX_RETRIES):
     async with SEM:
-        await asyncio.sleep(0.3 + random.random() * 0.7)
         for attempt in range(1, retries + 1):
             try:
-                await asyncio.sleep(random.uniform(0.5, 1.5))
-                return await fetch(session, param, company_list)
-            except (
-                aiohttp.ClientOSError,
-                aiohttp.ClientResponseError,
-                ConnectionResetError,
-            ) as e:
-                print(f"[Attempt {attempt}] Error fetching {param}: {e}")
+                result = await fetch(session, param, company_list)
+
+                if result is False:
+                    return None
+
+                return result
+
+            except RetryableFetchError as e:
+                print(f"[Attempt {attempt}] {e}")
                 if attempt < retries:
                     wait_time = (2 ** (attempt - 1)) + random.uniform(0, 0.5)
                     print(f"Retrying in {wait_time:.2f} seconds...")
@@ -191,14 +194,14 @@ def write_csv(rows, filepath: Path):
     print(f"CSV written: {filepath}")
 
 
-async def fetch_agent_detail_and_export(category: str, company_list: list[str]):
-    category = category.strip().lower()
+async def fetch_agent_detail_and_export(category: str, company_list: List[str]) -> None:
+    category: str = category.strip().lower()
     if not check_category(category):
         print("Invalid category input")
         return
 
     # need to do some check on the company list
-    company_list = set(company_list)
+    company_list: Set[str] = set(company_list)
 
     print(f"Fetching agent details (category={category}, company={company_list})")
 
@@ -220,7 +223,7 @@ async def fetch_agent_detail_and_export(category: str, company_list: list[str]):
     detail_agents = []
     detail_params = extract_detail_params(agents)
 
-    connector = aiohttp.TCPConnector(limit=5, force_close=False)
+    connector = aiohttp.TCPConnector(limit=CONCURRECY_LIMIT, force_close=False)
     async with aiohttp.ClientSession(connector=connector) as session:
         tasks = [
             fetch_with_retry(session, param, company_list) for param in detail_params
@@ -244,13 +247,20 @@ async def fetch_agent_detail_and_export(category: str, company_list: list[str]):
 
 
 if __name__ == "__main__":
-    category = input("Enter category (aps, ang): ")
-    company_input = (
-        input("Enter company names separated by commas: ")
+    category: str = input("Enter category number (1: aps, 2: ang): ")
+    if category == "1":
+        category = "aps"
+    elif category == "2":
+        category = "ang"
+    else:
+        sys.exit(1)
+
+    company_input: str = (
+        input("Enter company names separated by commas (AIA INTERNATIONAL LIMITED): ")
         or "AIA INTERNATIONAL LIMITED"
     )
 
-    company_list = [
+    company_list: List[str] = [
         company.strip().upper()
         for company in company_input.split(",")
         if company_input.split()
