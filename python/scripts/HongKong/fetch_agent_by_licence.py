@@ -12,22 +12,17 @@ def fetch_agent(sessionToken, licence):
     s = requests.Session()
     print("session created!")
 
-    # url for searching the agents
+    # url
     BASE_URL = "https://iir.ia.org.hk/IISPublicRegisterRestfulAPI/v1/search"
+    # https://iir.ia.org.hk/IISPublicRegisterRestfulAPI/v1/search/individualDetail?key=p8nH5v5Fj3I%3D&licStatus=all&token=hWA%252BY64JCYfHRKkqBSCZreZTNBjXM%252FkkUdSbf2%252FkJ%252FQ%253D
 
-    # variables
-    token = sessionToken
-
-    # need to loop through the alphabet letters for the first name
-    # surNameValue, token both need update
-    # other params are fixed
     params = {
         "seachIndicator": "licNo",
         "searchValue": "",
         "status": "all",
         "page": 1,
         "pagesize": 10,
-        "token": token,
+        "token": sessionToken,
     }
 
     headers = {
@@ -53,7 +48,6 @@ def fetch_agent(sessionToken, licence):
         num = f"{i:04d}"
         id_value = licence + num
         params["searchValue"] = id_value
-        # params["searchValue"] = "ia9999"
 
         try:
             resp = s.get(
@@ -82,10 +76,6 @@ def fetch_agent(sessionToken, licence):
 
         print(obj)
 
-    # print(
-    #     f"{licence} saved {agentCount} records, skipped {agentSkipped} due to mismatch letter with last name"
-    # )
-
     agentDict["totalAgentCount"] = totalActiveAgentCount
     with open(ALL_FILE, "w", encoding="utf-8") as f:
         json.dump(agentDict, f, ensure_ascii=False, indent=2)
@@ -95,12 +85,12 @@ def fetch_agent(sessionToken, licence):
 
 
 if __name__ == "__main__":
-    token = input("Enter Token: ")
+    sessionToken = input("Enter Session Token: ")
     licenseLetter = input("Enter Licence Letter: ")
 
     tic = time.perf_counter()
     fetch_agent(
-        token,
+        sessionToken,
         licenseLetter,
     )
     toc = time.perf_counter()
