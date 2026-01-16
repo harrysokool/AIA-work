@@ -7,19 +7,20 @@ import aiohttp
 import random
 import threading
 import sys
-from typing import Any, Dict, List, Optional, Set
 
 
 class RetryableFetchError(Exception):
     pass
 
 
-DETAIL_URL = "https://iiep.amcm.gov.mo/platform-enquiry-service/public/api/v1/web/enquiry/licenses/detail"
-CONCURRECY_LIMIT = 10
-MAX_RETRIES = 5
-SEM = asyncio.Semaphore(CONCURRECY_LIMIT)
+DETAIL_URL: str = (
+    "https://iiep.amcm.gov.mo/platform-enquiry-service/public/api/v1/web/enquiry/licenses/detail"
+)
+CONCURRECY_LIMIT: int = 10
+MAX_RETRIES: int = 5
+SEM: asyncio.Semaphore = asyncio.Semaphore(CONCURRECY_LIMIT)
 
-HEADERS = {
+HEADERS: dict[str, str] = {
     "Accept": "application/json",
     "User-Agent": "Mozilla/5.0",
     "Origin": "https://iiep.amcm.gov.mo",
@@ -27,7 +28,7 @@ HEADERS = {
 }
 
 
-def timer():
+def timer() -> None:
     counter = 1
     while True:
         time.sleep(1)
@@ -35,11 +36,7 @@ def timer():
         counter += 1
 
 
-def check_category(category: str) -> bool:
-    return category in {"aps", "ang"}
-
-
-def load_raw_data(raw_file: Path):
+def load_raw_data(raw_file: Path) -> list[dict] | None:
     try:
         with open(raw_file, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -60,7 +57,7 @@ def agent_has_company(detail_agent: dict, company_list: set) -> bool:
     return False
 
 
-def extract_detail_params(agents):
+def extract_detail_params(agents) -> list[dict] | None:
     if not agents:
         return None
 
@@ -178,7 +175,7 @@ def flatten_agents_for_excel(detail_agents):
     return rows
 
 
-def write_csv(rows, filepath: Path):
+def write_csv(rows, filepath: Path) -> None:
     if not rows:
         print("No rows to write.")
         return
@@ -194,15 +191,7 @@ def write_csv(rows, filepath: Path):
     print(f"CSV written: {filepath}")
 
 
-async def fetch_agent_detail_and_export(category: str, company_list: List[str]) -> None:
-    category: str = category.strip().lower()
-    if not check_category(category):
-        print("Invalid category input")
-        return
-
-    # need to do some check on the company list
-    company_list: Set[str] = set(company_list)
-
+async def fetch_agent_detail_and_export(category: str, company_list: set[str]) -> None:
     print(f"Fetching agent details (category={category}, company={company_list})")
 
     # Directories and Files
@@ -216,12 +205,11 @@ async def fetch_agent_detail_and_export(category: str, company_list: List[str]) 
     EXPORT_DIR.mkdir(parents=True, exist_ok=True)
     raw_file = RAW_DATA_DIR / "all.json"
 
-    agents = load_raw_data(raw_file)
+    agents: list[dict] | None = load_raw_data(raw_file)
     if agents is None:
         return
 
-    detail_agents = []
-    detail_params = extract_detail_params(agents)
+    detail_params: list[dict] | None = extract_detail_params(agents)
 
     connector = aiohttp.TCPConnector(limit=CONCURRECY_LIMIT, force_close=False)
     async with aiohttp.ClientSession(connector=connector) as session:
@@ -230,7 +218,7 @@ async def fetch_agent_detail_and_export(category: str, company_list: List[str]) 
         ]
         results = await asyncio.gather(*tasks)
 
-    detail_agents = [r for r in results if r is not None]
+    detail_agents: list[dict] | None = [r for r in results if r is not None]
 
     # Save processed JSON (detail objects)
     processed_file = PROCESSED_DATA_DIR / f"all_{category}.json"
@@ -247,12 +235,13 @@ async def fetch_agent_detail_and_export(category: str, company_list: List[str]) 
 
 
 if __name__ == "__main__":
-    category: str = input("Enter category number (1: aps, 2: ang): ")
+    category: str = input("Enter category number (1: aps, 2: ang): ").strip()
     if category == "1":
         category = "aps"
     elif category == "2":
         category = "ang"
     else:
+        print("Invalid input, please try again.")
         sys.exit(1)
 
     company_input: str = (
@@ -260,11 +249,11 @@ if __name__ == "__main__":
         or "AIA INTERNATIONAL LIMITED"
     )
 
-    company_list: List[str] = [
+    company_list: set[str] = {
         company.strip().upper()
         for company in company_input.split(",")
-        if company_input.split()
-    ]
+        if company.strip()
+    }
 
     threading.Thread(target=timer, daemon=True).start()
 

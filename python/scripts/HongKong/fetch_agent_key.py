@@ -12,6 +12,12 @@ from typing import Any, Dict, List, Optional, Set
 import ssl
 
 
+# Create SSL context ONCE
+SSL_CONTEXT = ssl.create_default_context()
+SSL_CONTEXT.check_hostname = False
+SSL_CONTEXT.verify_mode = ssl.CERT_NONE
+
+
 class RetryableFetchError(Exception):
     pass
 
@@ -62,12 +68,9 @@ def checkLetter(letter: str) -> bool:
 
 async def fetch(session, param):
     print("start fetching for ", param)
-    ssl_context = ssl.create_default_context()
-    ssl_context.check_hostname = False
-    ssl_context.verify_mode = ssl.CERT_NONE
     try:
         async with session.get(
-            BASE_URL, params=param, headers=HEADERS, ssl=ssl_context
+            BASE_URL, params=param, headers=HEADERS, ssl=SSL_CONTEXT
         ) as response:
             if response.status != 200:
                 raise RetryableFetchError(f"HTTP {response.status}")
@@ -78,9 +81,8 @@ async def fetch(session, param):
                 )
 
             detail = await response.json()
-
-            if detail.get("itemsCount", 0) == 1:
-                return detail
+            if detail.get("itemsCount", "") == "1":
+                return detail.get("data", [])[0].get("key", "")
             else:
                 return False
 
@@ -96,17 +98,12 @@ async def fetch_agent(sessionToken, licenseLetter):
 
     agent_params = []
     licenseLetter = licenseLetter.lower()
-    test_param = params.copy()
-    test_param["searchValue"] = "IA2145"
-    agent_params.append(test_param)
 
-    # for letter in "abcdefghijklmnopqrstuvwxyz":
-    #     for i in range(10000):
-    #         param = params.copy()
-    #         num = f"{i:04d}"
-    #         licence_number = licenseLetter + letter + num
-    #         param["searchValue"] = licence_number
-    #         agent_params.append(param)
+    for letter in "abcdefghijklmnopqrstuvwxyz":
+        agent_params = [
+            {**params, "searchValue": f"{licenseLetter}a{i:04d}"}
+            for i in range(1000, 3000)
+        ]
 
     connector = aiohttp.TCPConnector(limit=10, force_close=False)
     async with aiohttp.ClientSession(connector=connector) as session:
