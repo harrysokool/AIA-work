@@ -15,8 +15,6 @@ class RetryableFetchError(Exception):
 
 
 DETAIL_URL = "https://iiep.amcm.gov.mo/platform-enquiry-service/public/api/v1/web/enquiry/licenses/detail"
-
-# Keeping your original constant name to avoid changing other references
 CONCURRECY_LIMIT = 10
 MAX_RETRIES = 5
 SEM = asyncio.Semaphore(CONCURRECY_LIMIT)
@@ -221,7 +219,7 @@ async def fetch_agent_detail_and_export(category: str, company_list: set[str]) -
     PROCESSED_DATA_DIR.mkdir(parents=True, exist_ok=True)
     EXPORT_DIR.mkdir(parents=True, exist_ok=True)
 
-    raw_file = RAW_DATA_DIR / "all.json"
+    raw_file = RAW_DATA_DIR / f"{category}.json"
 
     agents = load_raw_data(raw_file)
     if agents is None:
@@ -241,14 +239,14 @@ async def fetch_agent_detail_and_export(category: str, company_list: set[str]) -
     detail_agents: list[dict] = [r for r in results if r is not None]
 
     # Save processed JSON (detail objects)
-    processed_file = PROCESSED_DATA_DIR / f"all_{category}.json"
+    processed_file = PROCESSED_DATA_DIR / f"{category}.json"
     with open(processed_file, "w", encoding="utf-8") as f:
         json.dump(detail_agents, f, ensure_ascii=False, indent=2)
     print(f"Processed JSON written: {processed_file}")
 
     # Export CSV for Excel
     rows = flatten_agents_for_excel(detail_agents)
-    csv_file = EXPORT_DIR / f"all_{category}.csv"
+    csv_file = EXPORT_DIR / f"{category}.csv"
     write_csv(rows, csv_file)
 
     print(f"Done. Matched {len(detail_agents)} agents, exported {len(rows)} rows")
