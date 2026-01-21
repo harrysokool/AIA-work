@@ -7,6 +7,7 @@ import aiohttp
 import random
 import threading
 import sys
+from typing import Any
 
 
 class RetryableFetchError(Exception):
@@ -14,6 +15,8 @@ class RetryableFetchError(Exception):
 
 
 DETAIL_URL = "https://iiep.amcm.gov.mo/platform-enquiry-service/public/api/v1/web/enquiry/licenses/detail"
+
+# Keeping your original constant name to avoid changing other references
 CONCURRECY_LIMIT = 10
 MAX_RETRIES = 5
 SEM = asyncio.Semaphore(CONCURRECY_LIMIT)
@@ -38,92 +41,109 @@ def load_raw_data(raw_file: Path) -> list[dict] | None:
     try:
         with open(raw_file, "r", encoding="utf-8") as f:
             data = json.load(f)
-            agents = data.get("content", [])
-            return agents if not None else None
+
+        # If the file doesn't have "content", treat as empty list (still valid)
+        agents = data.get("content", [])
+        if agents is None:
+            return None
+        if not isinstance(agents, list):
+            print("Unexpected raw format: 'content' is not a list")
+            return None
+        return agents
     except Exception as e:
         print("Error reading raw file:", e)
         return None
 
 
-def agent_has_company(detail_agent: dict, company_list: set) -> bool:
+def _norm_company_name(s: str) -> str:
+    return (s or "").strip().upper()
+
+
+def agent_has_company(detail_agent: dict, company_list: set[str]) -> bool:
     for corp in detail_agent.get("corporates") or []:
         for item in corp.get("items") or []:
-            nameEn = item.get("nameEn") or ""
-            if nameEn in company_list:
+            name_en = _norm_company_name(item.get("nameEn") or "")
+            if name_en and name_en in company_list:
                 return True
     return False
 
 
-def extract_detail_params(agents) -> list[dict] | None:
+def extract_detail_params(agents: list[dict]) -> list[dict] | None:
     if not agents:
         return None
 
-    detail_params = []
+    detail_params: list[dict] = []
     for agent in agents:
         if not agent:
             continue
 
-        licenseCategory = agent.get("licenseCategory", "")
+        license_category = agent.get("licenseCategory", "")
         license_no = agent.get("licenseNo", "")
 
-        if not licenseCategory or not license_no:
+        if not license_category or not license_no:
             continue
 
-        detail_params.append({"category": licenseCategory, "no": license_no})
+        detail_params.append({"category": license_category, "no": license_no})
 
-    return detail_params
-
-
-async def fetch(session, param, company_list):
-    try:
-        async with session.get(DETAIL_URL, params=param, headers=HEADERS) as response:
-            if response.status != 200:
-                raise RetryableFetchError(f"HTTP {response.status}")
-
-            if "application/json" not in response.headers.get("Content-Type", ""):
-                raise RetryableFetchError(
-                    f"Unexpected content type: {response.headers.get('Content-Type')}"
-                )
-
-            detail = await response.json()
-
-            if agent_has_company(detail, company_list):
-                return detail
-            else:
-                return False
-    except aiohttp.ClientError as e:
-        raise RetryableFetchError(f"Network error: {e}")
-    except Exception as e:
-        raise RetryableFetchError(f"Unexpected error: {e}")
+    return detail_params or None
 
 
-async def fetch_with_retry(session, param, company_list, retries=MAX_RETRIES):
-    async with SEM:
-        for attempt in range(1, retries + 1):
-            try:
-                result = await fetch(session, param, company_list)
+async def fetch(
+    session: aiohttp.ClientSession, param: dict, company_list: set[str]
+) -> dict | None:
+    async with session.get(
+        DETAIL_URL, params=param, headers=HEADERS, ssl=False
+    ) as response:
+        if response.status != 200:
+            raise RetryableFetchError(f"HTTP {response.status}")
 
-                if result is False:
-                    return None
+        if "application/json" not in (response.headers.get("Content-Type") or ""):
+            raise RetryableFetchError(
+                f"Unexpected content type: {response.headers.get('Content-Type')}"
+            )
 
-                return result
+        detail = await response.json()
 
-            except RetryableFetchError as e:
-                print(f"[Attempt {attempt}] {e}")
-                if attempt < retries:
-                    wait_time = (2 ** (attempt - 1)) + random.uniform(0, 0.5)
-                    print(f"Retrying in {wait_time:.2f} seconds...")
-                    await asyncio.sleep(wait_time)
-                else:
-                    print(f"Failed after {retries} attempts for {param}")
-                    return None
+        if agent_has_company(detail, company_list):
+            return detail
+        return None
 
 
-def flatten_agents_for_excel(detail_agents):
+async def fetch_with_retry(
+    session: aiohttp.ClientSession,
+    param: dict,
+    company_list: set[str],
+    retries: int = MAX_RETRIES,
+) -> dict | None:
+    for attempt in range(1, retries + 1):
+        try:
+            # Acquire per-attempt so we don't hold a slot while sleeping between retries
+            async with SEM:
+                return await fetch(session, param, company_list)
+
+        except aiohttp.ClientError as e:
+            err = RetryableFetchError(f"Network error: {e}")
+        except RetryableFetchError as e:
+            err = e
+        except Exception as e:
+            err = RetryableFetchError(f"Unexpected error: {e}")
+
+        print(f"[Attempt {attempt}] {err}")
+
+        if attempt < retries:
+            wait_time = (2 ** (attempt - 1)) + random.uniform(0, 0.5)
+            print(f"Retrying in {wait_time:.2f} seconds...")
+            await asyncio.sleep(wait_time)
+        else:
+            print(f"Failed after {retries} attempts for {param}")
+            return None
+
+
+def flatten_agents_for_excel(detail_agents: list[dict]) -> list[dict]:
     """
     One row per agent-company relationship (per corporate->item).
     """
-    rows = []
+    rows: list[dict[str, Any]] = []
     for agent in detail_agents:
         base = {
             "licenseNo": agent.get("licenseNo"),
@@ -171,7 +191,7 @@ def flatten_agents_for_excel(detail_agents):
     return rows
 
 
-def write_csv(rows, filepath: Path) -> None:
+def write_csv(rows: list[dict], filepath: Path) -> None:
     if not rows:
         print("No rows to write.")
         return
@@ -196,16 +216,18 @@ async def fetch_agent_detail_and_export(category: str, company_list: set[str]) -
     RAW_DATA_DIR = MACAU_DATA_DIR / category / "raw_agent_data"
     PROCESSED_DATA_DIR = MACAU_DATA_DIR / category / "processed_agent_data"
     EXPORT_DIR = MACAU_DATA_DIR / category / "exports"
+
     RAW_DATA_DIR.mkdir(parents=True, exist_ok=True)
     PROCESSED_DATA_DIR.mkdir(parents=True, exist_ok=True)
     EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+
     raw_file = RAW_DATA_DIR / "all.json"
 
-    agents: list[dict] | None = load_raw_data(raw_file)
+    agents = load_raw_data(raw_file)
     if agents is None:
         return
 
-    detail_params: list[dict] | None = extract_detail_params(agents)
+    detail_params = extract_detail_params(agents)
     if detail_params is None:
         return
 
@@ -216,9 +238,7 @@ async def fetch_agent_detail_and_export(category: str, company_list: set[str]) -
         ]
         results = await asyncio.gather(*tasks)
 
-    detail_agents: list[dict] | None = [r for r in results if r is not None]
-    if detail_agents is None:
-        return
+    detail_agents: list[dict] = [r for r in results if r is not None]
 
     # Save processed JSON (detail objects)
     processed_file = PROCESSED_DATA_DIR / f"all_{category}.json"
@@ -250,9 +270,9 @@ if __name__ == "__main__":
     )
 
     company_list: set[str] = {
-        company.strip().upper()
+        _norm_company_name(company)
         for company in company_input.split(",")
-        if company.strip()
+        if _norm_company_name(company)
     }
 
     threading.Thread(target=timer, daemon=True).start()
@@ -261,7 +281,6 @@ if __name__ == "__main__":
     asyncio.run(fetch_agent_detail_and_export(category, company_list))
     toc = time.perf_counter()
     print(f"Time took: {toc - tic:0.4f}s")
-
 
 # some company name to test
 # ASIA INSURANCE COMPANY LIMITED
