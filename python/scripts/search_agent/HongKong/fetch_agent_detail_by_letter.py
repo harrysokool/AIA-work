@@ -61,7 +61,7 @@ def fetch_agent(sessionToken, letter, status):
     BASE_URL = "https://iir.ia.org.hk/IISPublicRegisterRestfulAPI/v1/search"
 
     # directory paths
-    BASE_DIR = Path(__file__).resolve().parent.parent.parent
+    BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent
     BY_LETTER_DIR = BASE_DIR / "data" / "agents" / "hongkong" / "agents_by_letter"
     BY_LETTER_DIR.mkdir(parents=True, exist_ok=True)
 

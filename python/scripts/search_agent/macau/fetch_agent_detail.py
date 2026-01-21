@@ -13,12 +13,10 @@ class RetryableFetchError(Exception):
     pass
 
 
-DETAIL_URL: str = (
-    "https://iiep.amcm.gov.mo/platform-enquiry-service/public/api/v1/web/enquiry/licenses/detail"
-)
-CONCURRECY_LIMIT: int = 10
-MAX_RETRIES: int = 5
-SEM: asyncio.Semaphore = asyncio.Semaphore(CONCURRECY_LIMIT)
+DETAIL_URL = "https://iiep.amcm.gov.mo/platform-enquiry-service/public/api/v1/web/enquiry/licenses/detail"
+CONCURRECY_LIMIT = 10
+MAX_RETRIES = 5
+SEM = asyncio.Semaphore(CONCURRECY_LIMIT)
 
 HEADERS: dict[str, str] = {
     "Accept": "application/json",
@@ -53,7 +51,6 @@ def agent_has_company(detail_agent: dict, company_list: set) -> bool:
             nameEn = item.get("nameEn") or ""
             if nameEn in company_list:
                 return True
-
     return False
 
 
@@ -94,7 +91,6 @@ async def fetch(session, param, company_list):
                 return detail
             else:
                 return False
-
     except aiohttp.ClientError as e:
         raise RetryableFetchError(f"Network error: {e}")
     except Exception as e:
@@ -195,7 +191,7 @@ async def fetch_agent_detail_and_export(category: str, company_list: set[str]) -
     print(f"Fetching agent details (category={category}, company={company_list})")
 
     # Directories and Files
-    BASE_DIR = Path(__file__).resolve().parent.parent.parent
+    BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent
     MACAU_DATA_DIR = BASE_DIR / "data" / "agents" / "macau"
     RAW_DATA_DIR = MACAU_DATA_DIR / category / "raw_agent_data"
     PROCESSED_DATA_DIR = MACAU_DATA_DIR / category / "processed_agent_data"
@@ -210,6 +206,8 @@ async def fetch_agent_detail_and_export(category: str, company_list: set[str]) -
         return
 
     detail_params: list[dict] | None = extract_detail_params(agents)
+    if detail_params is None:
+        return
 
     connector = aiohttp.TCPConnector(limit=CONCURRECY_LIMIT, force_close=False)
     async with aiohttp.ClientSession(connector=connector) as session:
@@ -219,6 +217,8 @@ async def fetch_agent_detail_and_export(category: str, company_list: set[str]) -
         results = await asyncio.gather(*tasks)
 
     detail_agents: list[dict] | None = [r for r in results if r is not None]
+    if detail_agents is None:
+        return
 
     # Save processed JSON (detail objects)
     processed_file = PROCESSED_DATA_DIR / f"all_{category}.json"
@@ -235,7 +235,7 @@ async def fetch_agent_detail_and_export(category: str, company_list: set[str]) -
 
 
 if __name__ == "__main__":
-    category: str = input("Enter category number (1: aps, 2: ang): ").strip()
+    category = input("Enter category number (1: aps, 2: ang): ").strip()
     if category == "1":
         category = "aps"
     elif category == "2":
@@ -244,7 +244,7 @@ if __name__ == "__main__":
         print("Invalid input, please try again.")
         sys.exit(1)
 
-    company_input: str = (
+    company_input = (
         input("Enter company names separated by commas (AIA INTERNATIONAL LIMITED): ")
         or "AIA INTERNATIONAL LIMITED"
     )

@@ -30,7 +30,7 @@ BASE_URL = "https://iir.ia.org.hk/IISPublicRegisterRestfulAPI/v1/search/individu
 EMPTY_RESPONSE = '{"data":[],"itemsCount":"0","errorCode":null,"errorMsg":null}'
 
 # directory/file paths
-BASE_DIR = Path(__file__).resolve().parent.parent.parent
+BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent
 DATA_DIR = BASE_DIR / "data" / "agents" / "hongkong"
 ALL_FILE = DATA_DIR / "agents_keys.json"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
