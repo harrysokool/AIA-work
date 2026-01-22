@@ -14,9 +14,7 @@ env/
 
 # Generated data
 python/data/agents/
-python/data/captcha/
 python/data/doctor_receipts/
-python/captcha.png
 
 # Playwright cache (optional)
 .playwright/
