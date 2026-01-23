@@ -4,10 +4,13 @@ import sys
 import threading
 import time
 
+doctors_name = set()
+ALPHABET_SET = set("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
 
 BASE_URL = "https://www.mchk.org.hk/english/list_register/list.php"
 BASE_PARAMS = {"page": "", "ipp": "20", "type": ""}
-DOCTOR_TYPE = ["N"]
+DOCTOR_TYPE = ["L", "O", "P", "M", "N"]
+DOCTOR_TYPE = ["M", "N"]
 
 
 def check_doctor_type(doctor_type: str) -> bool:
@@ -29,7 +32,6 @@ def fetch():
 
 
 def fetch_doctors() -> None:
-    doctors_name = set()
     session = requests.Session()
     session.headers.update({"User-Agent": "Mozilla/5.0"})
 
@@ -61,7 +63,7 @@ def fetch_doctors() -> None:
                     lines = name_td.get_text("\n", strip=True).split("\n")
 
                     for name in lines:
-                        if name and name[0].isalpha():
+                        if name and name[0] in ALPHABET_SET:
                             doctors_name.add(name.replace(",", ""))
 
                 page += 1
