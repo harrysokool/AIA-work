@@ -383,8 +383,15 @@ def extract_doctor_name(image_path: str, debug: bool = False) -> Dict:
 
 
 if __name__ == "__main__":
-    for p in ["sample_2__ocr_binary.png", "sample_5__ocr_binary.png"]:
+    for p in [
+        "preprocessed_out/sample1__ocr_binary.png",
+        "preprocessed_out/sample2__ocr_binary.png",
+        "preprocessed_out/sample3__ocr_binary.png",
+        "preprocessed_out/sample4__ocr_binary.png",
+        "preprocessed_out/sample5__ocr_binary.png",
+    ]:
         try:
             print(p, "=>", extract_doctor_name(p, debug=False))
+            print("")
         except Exception as e:
             print(p, "=> ERROR:", e)

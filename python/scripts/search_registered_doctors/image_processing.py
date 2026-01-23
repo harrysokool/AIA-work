@@ -135,6 +135,6 @@ def preprocess_for_ocr_best(input_path: str, save_dir: str | None = None) -> dic
 
 if __name__ == "__main__":
     out = preprocess_for_ocr_best(
-        "../../data/doctor_receipts/sample2.jpg", save_dir="preprocessed_out"
+        "doctor_receipts/sample5.jpg", save_dir="preprocessed_out"
     )
     print("Saved:", list(out.keys()))
