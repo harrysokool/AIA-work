@@ -1,12 +1,12 @@
 from bs4 import BeautifulSoup
 import requests
-import sys
 import threading
 import time
 
 doctors_name = set()
 ALPHABET_SET = set("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
 
+OUTPUT_FILE = "doctors.txt"
 BASE_URL = "https://www.mchk.org.hk/english/list_register/list.php"
 BASE_PARAMS = {"page": "", "ipp": "20", "type": ""}
 DOCTOR_TYPE = ["L", "O", "P", "M", "N"]
@@ -56,7 +56,7 @@ def fetch_doctors() -> None:
 
                 for row in rows:
                     tds = row.find_all("td")
-                    if len(tds) == 2:
+                    if len(tds) == 2:  # no more doctors in the table
                         break
 
                     name_td = tds[1]
@@ -71,8 +71,11 @@ def fetch_doctors() -> None:
                 print(f"Error on type {doctor_type}, page {page}: {e}")
                 break
 
-    print(doctors_name)
-    print(len(doctors_name))
+    with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
+        for name in doctors_name:
+            f.write(name + "\n")
+
+    print(f"Saved {len(doctors_name)}")
 
 
 if __name__ == "__main__":
