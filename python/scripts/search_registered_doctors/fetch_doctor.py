@@ -4,13 +4,14 @@ import time
 import asyncio
 import aiohttp
 from typing import Optional, List, Set
+import pickle
 
 
 doctors_name: Set[str] = set()
 ALPHABET_SET: Set[str] = set("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
 
 CONCURRECY_LIMIT = 10
-OUTPUT_FILE = "doctors.txt"
+OUTPUT_FILE = "doctors.pkl"
 BASE_URL = "https://www.mchk.org.hk/english/list_register/list.php"
 BASE_PARAMS = {"page": "", "ipp": "20", "type": ""}
 DOCTOR_TYPE = ["N", "M"]
@@ -25,9 +26,8 @@ def timer() -> None:
 
 
 def save_doctors() -> None:
-    with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
-        for name in doctors_name:
-            f.write(name + "\n")
+    with open(OUTPUT_FILE, "wb") as f:
+        pickle.dump(doctors_name, f)
 
 
 async def fetch_page(
@@ -128,11 +128,19 @@ async def fetch_doctors(doctor_type: str) -> None:
             w.cancel()
 
 
-async def main() -> None:
+async def main() -> Set[str]:
     # for each doctor type, we scrape them separately and concurrently
     tasks = [fetch_doctors(doc_type) for doc_type in DOCTOR_TYPE]
     await asyncio.gather(*tasks)
     save_doctors()
+
+
+def load_doctors_set() -> Set[str]:
+    """
+    Load the scraped registered doctors from doctors.pkl.
+    """
+    with open(OUTPUT_FILE, "rb") as f:
+        return pickle.load(f)
 
 
 if __name__ == "__main__":

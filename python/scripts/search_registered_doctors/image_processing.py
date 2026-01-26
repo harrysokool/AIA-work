@@ -1,5 +1,6 @@
 import cv2
 import numpy as np
+import os
 
 
 def _resize_up(img: np.ndarray, target_min_dim: int = 1800) -> np.ndarray:
@@ -133,8 +134,18 @@ def preprocess_for_ocr_best(input_path: str, save_dir: str | None = None) -> dic
     return {"ocr_gray": ocr_gray, "ocr_binary": ocr_binary}
 
 
+def preprocess_folder(input_folder, output_folder):
+    outputs = {}
+    for filename in os.listdir(input_folder):
+        if filename.lower().endswith((".jpg", ".jpeg", ".png", ".tif", ".bmp", ".pdf")):
+            input_path = os.path.join(input_folder, filename)
+            print(f"Processing {filename}...")
+            outputs[filename] = preprocess_for_ocr_best(
+                input_path, save_dir=output_folder
+            )
+    return outputs
+
+
 if __name__ == "__main__":
-    out = preprocess_for_ocr_best(
-        "doctor_receipts/sample5.jpg", save_dir="preprocessed_out"
-    )
-    print("Saved:", list(out.keys()))
+    all_outputs = preprocess_folder("doctor_receipts", "preprocessed_out")
+    print("Finished processing:", list(all_outputs.keys()))

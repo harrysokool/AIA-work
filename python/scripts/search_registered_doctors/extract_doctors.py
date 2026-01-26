@@ -1,4 +1,5 @@
 import re
+import os
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
@@ -383,15 +384,31 @@ def extract_doctor_name(image_path: str, debug: bool = False) -> Dict:
 
 
 if __name__ == "__main__":
-    for p in [
-        "preprocessed_out/sample1__ocr_binary.png",
-        "preprocessed_out/sample2__ocr_binary.png",
-        "preprocessed_out/sample3__ocr_binary.png",
-        "preprocessed_out/sample4__ocr_binary.png",
-        "preprocessed_out/sample5__ocr_binary.png",
-    ]:
+    input_dir = "preprocessed_out"
+
+    for filename in os.listdir(input_dir):
+        if "__ocr_binary" not in filename:
+            continue
+
+        p_bin = os.path.join(input_dir, filename)
+        p_gray = p_bin.replace("__ocr_binary", "__ocr_gray")
+
+        print(f"Processing {filename}...")
+
+        # Try binary
         try:
-            print(p, "=>", extract_doctor_name(p, debug=False))
-            print("")
-        except Exception as e:
-            print(p, "=> ERROR:", e)
+            doctor = extract_doctor_name(p_bin, debug=False)
+        except Exception:
+            doctor = None
+
+        # Fallback to grayscale
+        if not doctor or doctor.strip() == "":
+            if os.path.exists(p_gray):
+                print("Binary failed → trying grayscale")
+                try:
+                    doctor = extract_doctor_name(p_gray, debug=False)
+                except Exception:
+                    doctor = None
+
+        print("Result:", doctor)
+        print()
