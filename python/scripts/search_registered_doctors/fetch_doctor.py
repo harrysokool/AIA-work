@@ -31,6 +31,35 @@ def fetch():
     pass
 
 
+def get_doctors_from_table(soup):
+    table = soup.find_all("table")
+    if not table:
+        raise Exception("Could not find table")
+
+    table = table[3]
+    rows = table.find_all("tr")[2:]
+    if not rows:
+        raise Exception("Could not find rows")
+
+    for row in rows:
+        tds = row.find_all("td")
+        if len(tds) == 2:  # no more doctors in the table
+            break
+
+        name_td = tds[1]
+        lines = name_td.get_text("\n", strip=True).split("\n")
+
+        for name in lines:
+            if name and name[0] in ALPHABET_SET:
+                doctors_name.add(name.replace(",", ""))
+
+
+def save_doctors(doctors_name):
+    with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
+        for name in doctors_name:
+            f.write(name + "\n")
+
+
 def fetch_doctors() -> None:
     session = requests.Session()
     session.headers.update({"User-Agent": "Mozilla/5.0"})
@@ -39,41 +68,21 @@ def fetch_doctors() -> None:
         page = 1
 
         while True:
+            time.sleep(0.3)
             try:
                 params = {"page": str(page), "ipp": "20", "type": doctor_type}
-                html = requests.get(BASE_URL, params=params).text
+                html = session.get(BASE_URL, params=params).text
                 soup = BeautifulSoup(html, "lxml")
 
                 # Select the table with the doctors info
-                table = soup.find_all("table")
-                if not table:
-                    raise Exception("Could not find table")
-
-                table = table[3]
-                rows = table.find_all("tr")[2:]
-                if not rows:
-                    raise Exception("Could not find rows")
-
-                for row in rows:
-                    tds = row.find_all("td")
-                    if len(tds) == 2:  # no more doctors in the table
-                        break
-
-                    name_td = tds[1]
-                    lines = name_td.get_text("\n", strip=True).split("\n")
-
-                    for name in lines:
-                        if name and name[0] in ALPHABET_SET:
-                            doctors_name.add(name.replace(",", ""))
+                get_doctors_from_table(soup)
 
                 page += 1
             except Exception as e:
                 print(f"Error on type {doctor_type}, page {page}: {e}")
                 break
 
-    with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
-        for name in doctors_name:
-            f.write(name + "\n")
+    save_doctors(doctors_name)
 
     print(f"Saved {len(doctors_name)}")
 
