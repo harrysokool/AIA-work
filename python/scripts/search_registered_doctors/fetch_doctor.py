@@ -1,5 +1,4 @@
 from bs4 import BeautifulSoup
-import requests
 import threading
 import time
 import asyncio
@@ -13,6 +12,7 @@ OUTPUT_FILE = "doctors.txt"
 BASE_URL = "https://www.mchk.org.hk/english/list_register/list.php"
 BASE_PARAMS = {"page": "", "ipp": "20", "type": ""}
 DOCTOR_TYPE = ["L", "O", "P", "M", "N"]
+DOCTOR_TYPE = ["N", "M"]
 
 
 def timer() -> None:
@@ -35,6 +35,35 @@ async def fetch_page(session, doctor_type, page):
         return await resp.text()
 
 
+def find_table(soup):
+    tables = soup.find_all("table")
+    if not tables or len(tables) < 4:
+        return None
+    table = tables[3]
+    return table
+
+
+def add_doctors(rows) -> bool:
+    found_doctor = False
+
+    for row in rows:
+        tds = row.find_all("td")
+        if len(tds) == 2:  # no more doctors in the table
+            found_doctor = False
+            break
+
+        found_doctor = True
+
+        name_td = tds[1]
+        lines = name_td.get_text("\n", strip=True).split("\n")
+
+        for name in lines:
+            if name and name[0] in ALPHABET_SET:
+                doctors_name.add(name.replace(",", ""))
+
+    return found_doctor
+
+
 async def worker(doctor_type, session, queue):
     while True:
         page = await queue.get()
@@ -45,35 +74,19 @@ async def worker(doctor_type, session, queue):
             soup = BeautifulSoup(html, "lxml")
 
             # try to find the target table on the website
-            tables = soup.find_all("table")
-            if not tables:
+            table = find_table(soup)
+            if table is None:
                 queue.task_done()
                 break
-            tables = tables[3]
 
             # skipping the headers
-            rows = tables.find_all("tr")[2:]
+            rows = table.find_all("tr")[2:]
             if not rows:
                 queue.task_done()
                 break
 
             # flag to see if we should continue search for the next page
-            found_doctor = False
-
-            for row in rows:
-                tds = row.find_all("td")
-                if len(tds) == 2:  # no more doctors in the table
-                    found_doctor = False
-                    break
-
-                found_doctor = True
-
-                name_td = tds[1]
-                lines = name_td.get_text("\n", strip=True).split("\n")
-
-                for name in lines:
-                    if name and name[0] in ALPHABET_SET:
-                        doctors_name.add(name.replace(",", ""))
+            found_doctor = add_doctors(rows)
 
             if found_doctor:
                 await queue.put(page + 1)
@@ -111,7 +124,6 @@ async def main():
     # for each doctor type, we scrape them separately and concurrently
     tasks = [fetch_doctors(doc_type) for doc_type in DOCTOR_TYPE]
     await asyncio.gather(*tasks)
-
     save_doctors()
 
 
