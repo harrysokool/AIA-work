@@ -334,6 +334,21 @@ def crop_region(img, region: str):
     return img
 
 
+def clean_name(name):
+    # Remove periods, commas, etc.
+    cleaned = re.sub(r"[.,]", "", name)
+    cleaned = cleaned.strip()
+
+    parts = cleaned.split()
+
+    # If last name segment is English name (e.g. Gary, Peter)
+    # heuristic: starts with capital letter and alphabetic
+    if parts and parts[-1].istitle() and parts[-1].isalpha():
+        return " ".join(parts).lower()
+    else:
+        return cleaned.lower()
+
+
 # -----------------------------
 # Public API
 # -----------------------------
@@ -376,7 +391,7 @@ def extract_doctor_name(image_path: str, debug: bool = False) -> Dict:
         conf = 0.80
 
     return {
-        "doctor_name": best.name.upper().replace("DR. ", "").strip(),
+        "doctor_name": clean_name(best.name),
         "confidence": conf,
         "evidence": [best.evidence],
         "meta": {"source": best.source, "region": best.region, "score": best.score},
