@@ -335,18 +335,10 @@ def crop_region(img, region: str):
 
 
 def clean_name(name):
-    # Remove periods, commas, etc.
-    cleaned = re.sub(r"[.,]", "", name)
-    cleaned = cleaned.strip()
-
-    parts = cleaned.split()
-
-    # If last name segment is English name (e.g. Gary, Peter)
-    # heuristic: starts with capital letter and alphabetic
-    if parts and parts[-1].istitle() and parts[-1].isalpha():
-        return " ".join(parts).lower()
-    else:
-        return cleaned.lower()
+    # remove punctuation
+    name = re.sub(r"[.,]", "", name)
+    # normalize spaces + lowercase
+    return " ".join(name.split()).upper()
 
 
 # -----------------------------
