@@ -13,23 +13,17 @@ def run_pipeline():
     print("      HK Doctor Receipt Verification     ")
     print("========================================\n")
 
-    # -------------------------------------------
-    # 1. Load HK doctors registry (from pickle)
-    # -------------------------------------------
+    # load doctor list
     print("[1] Loading HKMC registered doctors list...")
     hk_doctors = load_doctors_set()
     print(f"[INFO] Loaded {len(hk_doctors)} doctors.\n")
 
-    # -------------------------------------------
     # 2. Preprocess raw images
-    # -------------------------------------------
     print("[2] Preprocessing all receipt images...")
     preprocess_folder(RAW_DIR, PRE_DIR)
     print("[INFO] Preprocessing done.\n")
 
-    # -------------------------------------------
     # 3. Extract doctor names from processed files
-    # -------------------------------------------
     print("[3] Extracting doctor names...\n")
 
     results = []

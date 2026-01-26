@@ -14,7 +14,7 @@ CONCURRECY_LIMIT = 10
 OUTPUT_FILE = "doctors.pkl"
 BASE_URL = "https://www.mchk.org.hk/english/list_register/list.php"
 BASE_PARAMS = {"page": "", "ipp": "20", "type": ""}
-DOCTOR_TYPE = ["N", "M"]
+DOCTOR_TYPE = ["L", "O", "P", "N", "M"]
 
 
 def timer() -> None:
