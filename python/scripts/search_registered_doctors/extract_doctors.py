@@ -334,11 +334,11 @@ def crop_region(img, region: str):
     return img
 
 
-def clean_name(name):
+def clean_name1(name):
     # remove punctuation
     name = re.sub(r"[.,]", "", name)
     # normalize spaces + lowercase
-    return " ".join(name.split()).upper()
+    return " ".join(name.split()).upper().replace("DR ", "")
 
 
 # -----------------------------
@@ -383,7 +383,7 @@ def extract_doctor_name(image_path: str, debug: bool = False) -> Dict:
         conf = 0.80
 
     return {
-        "doctor_name": clean_name(best.name),
+        "doctor_name": clean_name1(best.name),
         "confidence": conf,
         "evidence": [best.evidence],
         "meta": {"source": best.source, "region": best.region, "score": best.score},
