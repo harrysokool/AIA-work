@@ -28,6 +28,9 @@ def timer() -> None:
 def save_doctors() -> None:
     with open(OUTPUT_FILE, "wb") as f:
         pickle.dump(doctors_name, f)
+    with open("doctors.txt", "w", encoding="utf-8") as f:
+        for name in doctors_name:
+            f.write(name + "\n")
 
 
 async def fetch_page(

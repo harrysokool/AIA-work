@@ -376,7 +376,7 @@ def extract_doctor_name(image_path: str, debug: bool = False) -> Dict:
         conf = 0.80
 
     return {
-        "doctor_name": best.name,
+        "doctor_name": best.name.upper().replace("DR. ", ""),
         "confidence": conf,
         "evidence": [best.evidence],
         "meta": {"source": best.source, "region": best.region, "score": best.score},
