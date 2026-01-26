@@ -65,7 +65,7 @@ def add_doctors(rows: List[Tag]) -> bool:
 
         for name in lines:
             if name and name[0] in ALPHABET_SET:
-                doctors_name.add(name.replace(",", ""))
+                doctors_name.add(name.replace(",", "").upper())
 
     return found_doctor
 
