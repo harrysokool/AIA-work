@@ -1,17 +1,18 @@
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Tag
 import threading
 import time
 import asyncio
 import aiohttp
+from typing import Optional, List, Set
 
-doctors_name = set()
-ALPHABET_SET = set("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+
+doctors_name: Set[str] = set()
+ALPHABET_SET: Set[str] = set("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
 
 CONCURRECY_LIMIT = 10
 OUTPUT_FILE = "doctors.txt"
 BASE_URL = "https://www.mchk.org.hk/english/list_register/list.php"
 BASE_PARAMS = {"page": "", "ipp": "20", "type": ""}
-DOCTOR_TYPE = ["L", "O", "P", "M", "N"]
 DOCTOR_TYPE = ["N", "M"]
 
 
@@ -23,19 +24,21 @@ def timer() -> None:
         counter += 1
 
 
-def save_doctors():
+def save_doctors() -> None:
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
         for name in doctors_name:
             f.write(name + "\n")
 
 
-async def fetch_page(session, doctor_type, page):
+async def fetch_page(
+    session: aiohttp.ClientSession, doctor_type: str, page: int
+) -> str:
     params = {"page": str(page), "ipp": "20", "type": doctor_type}
     async with session.get(BASE_URL, params=params) as resp:
         return await resp.text()
 
 
-def find_table(soup):
+def find_table(soup: BeautifulSoup) -> Optional[Tag]:
     tables = soup.find_all("table")
     if not tables or len(tables) < 4:
         return None
@@ -43,7 +46,7 @@ def find_table(soup):
     return table
 
 
-def add_doctors(rows) -> bool:
+def add_doctors(rows: List[Tag]) -> bool:
     found_doctor = False
 
     for row in rows:
@@ -64,29 +67,32 @@ def add_doctors(rows) -> bool:
     return found_doctor
 
 
-async def worker(doctor_type, session, queue):
+async def worker(
+    doctor_type: str, session: aiohttp.ClientSession, queue: asyncio.Queue[int]
+) -> None:
+
     while True:
-        page = await queue.get()
+        page: int = await queue.get()
 
         try:
             # here need to fetch the page
-            html = await fetch_page(session, doctor_type, page)
-            soup = BeautifulSoup(html, "lxml")
+            html: str = await fetch_page(session, doctor_type, page)
+            soup: BeautifulSoup = BeautifulSoup(html, "lxml")
 
             # try to find the target table on the website
-            table = find_table(soup)
+            table: Optional[Tag] = find_table(soup)
             if table is None:
                 queue.task_done()
                 break
 
             # skipping the headers
-            rows = table.find_all("tr")[2:]
+            rows: List[Tag] = table.find_all("tr")[2:]
             if not rows:
                 queue.task_done()
                 break
 
             # flag to see if we should continue search for the next page
-            found_doctor = add_doctors(rows)
+            found_doctor: bool = add_doctors(rows)
 
             if found_doctor:
                 await queue.put(page + 1)
@@ -101,13 +107,15 @@ async def worker(doctor_type, session, queue):
             break
 
 
-async def fetch_doctors(doctor_type) -> None:
-    queue = asyncio.Queue()
+async def fetch_doctors(doctor_type: str) -> None:
+    queue: asyncio.Queue[int] = asyncio.Queue()
     await queue.put(1)
 
     connector = aiohttp.TCPConnector(limit=CONCURRECY_LIMIT, force_close=False)
     async with aiohttp.ClientSession(connector=connector) as session:
-        workers = [
+
+        # spawn workers to process pages concurrently
+        workers: List[asyncio.Task] = [
             asyncio.create_task(worker(doctor_type, session, queue))
             for _ in range(CONCURRECY_LIMIT)
         ]
@@ -120,7 +128,7 @@ async def fetch_doctors(doctor_type) -> None:
             w.cancel()
 
 
-async def main():
+async def main() -> None:
     # for each doctor type, we scrape them separately and concurrently
     tasks = [fetch_doctors(doc_type) for doc_type in DOCTOR_TYPE]
     await asyncio.gather(*tasks)
