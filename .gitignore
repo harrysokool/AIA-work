@@ -8,6 +8,7 @@ __pycache__/
 *.py[cod]
 
 # Virtual environments
+.venv_ocr
 .venv/
 venv/
 env/

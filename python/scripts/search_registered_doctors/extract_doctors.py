@@ -1,19 +1,10 @@
-import os
 import re
-import time
+import os
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import cv2
-from paddleocr import PaddleOCR
-
-
-# -----------------------------
-# IMPORTANT: disable the model hoster connectivity check
-# -----------------------------
-# You saw: "Checking connectivity to the model hosters..."
-# In locked-down environments, this can hang.
-os.environ["DISABLE_MODEL_SOURCE_CHECK"] = "True"
+import pytesseract
 
 
 # -----------------------------
@@ -74,6 +65,9 @@ def _norm_spaces(s: str) -> str:
 
 
 def normalize_text(s: str) -> str:
+    """
+    Normalize common OCR typos + casing for anchor matching.
+    """
     t = s.lower()
     t = (
         t.replace("doetor", "doctor")
@@ -86,155 +80,85 @@ def normalize_text(s: str) -> str:
 
 
 # -----------------------------
-# PaddleOCR singleton
+# OCR helpers
 # -----------------------------
-# NOTE: start with use_angle_cls=False to avoid stalls.
-# If this works, you can switch it back to True later.
-_PADDLE_OCR = PaddleOCR(
-    use_angle_cls=False,
-    lang="en",  # switch to "ch" if you have mixed Chinese in receipts
-)
-
-
-def _ensure_bgr(img):
-    if img is None:
-        return None
-    if len(img.shape) == 2:
-        return cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
-    return img
-
-
-def _paddle_run(img) -> object:
+def ocr_lines_from_tesseract(img, psm: int, min_conf: float = 0.0) -> List[str]:
     """
-    PaddleOCR API compatibility:
-    Newer versions: predict(img) and do NOT pass cls
-    Older versions: ocr(img, cls=True)
+    OCR via image_to_data and reconstruct lines using (block, par, line).
+    Keeps low-confidence words to avoid losing key fields on noisy scans.
     """
-    img = _ensure_bgr(img)
-    if img is None:
-        return None
+    config = f"--oem 3 --psm {psm}"
+    data = pytesseract.image_to_data(
+        img, config=config, output_type=pytesseract.Output.DICT
+    )
 
-    # Diagnostic timing
-    t0 = time.time()
+    n = len(data["text"])
+    lines: Dict[Tuple[int, int, int], List[str]] = {}
 
-    if hasattr(_PADDLE_OCR, "predict"):
-        out = _PADDLE_OCR.predict(img)
-    else:
-        out = _PADDLE_OCR.ocr(img, cls=True)
+    for i in range(n):
+        word = (data["text"][i] or "").strip()
+        if not word:
+            continue
 
-    dt = time.time() - t0
-    return out, dt
-
-
-# -----------------------------
-# OCR helpers (PaddleOCR)
-# -----------------------------
-def ocr_lines_from_paddle(img, min_conf: float = 0.0, debug_tag: str = "") -> List[str]:
-    if img is None:
-        return []
-
-    print(f"[OCR] start {debug_tag}")
-    (result, dt) = _paddle_run(img)
-    print(f"[OCR] done  {debug_tag}  time={dt:.2f}s")
-
-    if not result:
-        return []
-
-    # Normalize output into list of dets
-    dets = None
-    if isinstance(result, list):
-        if len(result) > 0 and isinstance(result[0], list):
-            dets = result[0]
-        else:
-            dets = result
-    else:
-        return []
-
-    if not dets:
-        return []
-
-    items = []
-    for det in dets:
+        conf_raw = data["conf"][i]
         try:
-            box, (text, conf) = det
+            conf = float(conf_raw)
         except Exception:
+            conf = -1.0
+
+        # Keep almost everything; only drop if explicitly below min_conf
+        if conf != -1.0 and conf < min_conf:
             continue
 
-        if text is None:
-            continue
-        text = str(text).strip()
-        if not text:
-            continue
+        key = (data["block_num"][i], data["par_num"][i], data["line_num"][i])
+        lines.setdefault(key, []).append(word)
 
-        try:
-            conf = float(conf)
-        except Exception:
-            conf = 0.0
-
-        if conf < min_conf:
-            continue
-
-        xs = [p[0] for p in box]
-        ys = [p[1] for p in box]
-        x_min = min(xs)
-        y_min, y_max = min(ys), max(ys)
-        y_center = (y_min + y_max) / 2.0
-
-        items.append(
-            {
-                "text": text,
-                "conf": conf,
-                "x_min": x_min,
-                "y_center": y_center,
-                "height": max(1.0, (y_max - y_min)),
-            }
-        )
-
-    if not items:
-        return []
-
-    # Sort by vertical position first
-    items.sort(key=lambda d: (d["y_center"], d["x_min"]))
-
-    # Group into lines
-    lines: List[List[dict]] = []
-    current: List[dict] = []
-    current_y: Optional[float] = None
-    current_h: float = 0.0
-
-    for it in items:
-        if current_y is None:
-            current = [it]
-            current_y = it["y_center"]
-            current_h = it["height"]
-            continue
-
-        thresh = max(14.0, 0.9 * max(current_h, it["height"]))
-        if abs(it["y_center"] - current_y) <= thresh:
-            current.append(it)
-            current_y = (current_y * (len(current) - 1) + it["y_center"]) / len(current)
-            current_h = max(current_h, it["height"])
-        else:
-            lines.append(current)
-            current = [it]
-            current_y = it["y_center"]
-            current_h = it["height"]
-
-    if current:
-        lines.append(current)
-
-    out_lines: List[str] = []
-    for line_items in lines:
-        line_items.sort(key=lambda d: d["x_min"])
-        s = _norm_spaces(" ".join(d["text"] for d in line_items))
-        if len(s) >= 2:
-            out_lines.append(s)
-
+    out_lines = [_norm_spaces(" ".join(lines[k])) for k in sorted(lines.keys())]
+    out_lines = [ln for ln in out_lines if len(ln) >= 2]
     return out_lines
 
 
-def multi_pass_ocr_lines(img, debug_tag: str = "") -> List[str]:
-    return ocr_lines_from_paddle(img, min_conf=0.0, debug_tag=debug_tag)
+def score_ocr_text(lines: List[str]) -> int:
+    """
+    Score OCR output based on whether we see strong anchors.
+    """
+    joined = "\n".join(lines)
+    t = normalize_text(joined)
+    score = 0
+
+    if "doctor name" in t:
+        score += 6
+    if re.search(r"\bdoctor\b", t):
+        score += 4
+    if re.search(r"\bphysician\b", t):
+        score += 3
+    if re.search(r"\bdr\b\.?", t):
+        score += 2
+    if "醫生" in joined or "医生" in joined:
+        score += 2
+
+    if len(lines) < 5:
+        score -= 2
+
+    return score
+
+
+def multi_pass_ocr_lines(img) -> List[str]:
+    """
+    Try multiple PSMs and choose the OCR output that best captures anchors.
+    """
+    psm_candidates = [6, 4, 11, 3]
+    best_lines: List[str] = []
+    best_score = -10
+
+    for psm in psm_candidates:
+        lines = ocr_lines_from_tesseract(img, psm=psm, min_conf=0.0)
+        s = score_ocr_text(lines)
+        if s > best_score:
+            best_score = s
+            best_lines = lines
+
+    return best_lines
 
 
 # -----------------------------
@@ -244,8 +168,8 @@ def multi_pass_ocr_lines(img, debug_tag: str = "") -> List[str]:
 class Candidate:
     name: str
     evidence: str
-    source: str
-    region: str
+    source: str  # "doctor_field" or "dr_line"
+    region: str  # "top", "full", "bottom"
     score: int
 
 
@@ -255,8 +179,13 @@ def looks_like_non_doctor_line(line: str) -> bool:
 
 
 def clean_name(raw: str) -> str:
+    """
+    Clean and normalize extracted name.
+    Supports title case and ALL CAPS with commas.
+    """
     s = raw.strip()
 
+    # Stop at common stopwords if OCR glued multiple fields
     s_lower = normalize_text(s)
     for w in STOPWORDS_AFTER_NAME:
         idx = s_lower.find(f" {w}")
@@ -264,15 +193,18 @@ def clean_name(raw: str) -> str:
             s = s[:idx].strip()
             break
 
+    # Remove degree suffixes
     for pat in DEGREE_SUFFIX_PATTERNS:
         m = re.search(pat, normalize_text(s))
         if m:
             s = s[: m.start()].strip()
             break
 
+    # Keep letters, spaces, dots, commas
     s = re.sub(r"[^A-Za-z\s\.,]", " ", s)
     s = _norm_spaces(s)
 
+    # Normalize leading Dr
     s = re.sub(r"^\s*dr\s*\.\s*", "Dr. ", s, flags=re.IGNORECASE)
     s = re.sub(r"^\s*dr\s+", "Dr. ", s, flags=re.IGNORECASE)
 
@@ -280,31 +212,28 @@ def clean_name(raw: str) -> str:
 
 
 def extract_from_doctor_field(line: str) -> Optional[str]:
-    patterns = [
-        r"\bdoctor\s*name\b\s*[:\-]?\s*(.+)$",
-        r"\battending\s*doctor\b\s*[:\-]?\s*(.+)$",
-        r"\bdoctor\b\s*[:\-]?\s*(.+)$",
-        r"\bphysician\b\s*[:\-]?\s*(.+)$",
-        r"\bconsultant\b\s*[:\-]?\s*(.+)$",
-        r"\bdr\s*name\b\s*[:\-]?\s*(.+)$",
-        r"(醫生|医生)\s*[:：\-]?\s*(.+)$",
-    ]
+    """
+    Extract name from explicit Doctor / Doctor Name field lines.
+    """
+    m = re.search(r"\bdoctor\s*name\b\s*[:\-]?\s*(.+)$", line, flags=re.IGNORECASE)
+    if not m:
+        m = re.search(r"\bdoctor\b\s*[:\-]?\s*(.+)$", line, flags=re.IGNORECASE)
+    if not m:
+        return None
 
-    for pat in patterns:
-        m = re.search(pat, line, flags=re.IGNORECASE)
-        if not m:
-            continue
+    rest = m.group(1).strip()
+    name = clean_name(rest)
 
-        rest = m.group(m.lastindex).strip()
-        name = clean_name(rest)
-        if len(name.replace("Dr. ", "").split()) < 2:
-            return None
-        return name
+    if len(name.replace("Dr. ", "").split()) < 2:
+        return None
 
-    return None
+    return name
 
 
 def extract_from_dr_line(line: str) -> Optional[str]:
+    """
+    Extract from lines starting with Dr / DR.
+    """
     m = re.search(r"^\s*dr\.?\s*(.+)$", line, flags=re.IGNORECASE)
     if not m:
         return None
@@ -318,74 +247,76 @@ def extract_from_dr_line(line: str) -> Optional[str]:
     return name
 
 
-def extract_doctor_name_from_neighbors(lines: List[str], i: int) -> Optional[str]:
-    t = normalize_text(lines[i])
-    if not re.search(r"\bdoctor\b|\bphysician\b|醫生|医生", t):
-        return None
-
-    direct = extract_from_doctor_field(lines[i])
-    if direct:
-        return direct
-
-    for j in (i + 1, i + 2):
-        if j >= len(lines):
-            break
-        cand_line = lines[j].strip()
-        if not cand_line:
-            continue
-        if looks_like_non_doctor_line(cand_line):
-            continue
-
-        name = clean_name(cand_line)
-        if len(name.replace("Dr. ", "").split()) >= 2:
-            return name
-
-    return None
-
-
 def generate_candidates(lines: List[str], region: str) -> List[Candidate]:
     cands: List[Candidate] = []
 
-    for i, line in enumerate(lines):
+    for line in lines:
         if looks_like_non_doctor_line(line):
             continue
 
         t = normalize_text(line)
 
-        nm = extract_doctor_name_from_neighbors(lines, i)
-        if nm:
-            sc = 70
-            if "doctor name" in t:
-                sc += 20
-            elif re.search(r"\bdoctor\b", t):
-                sc += 10
-            sc += {"top": 15, "full": 10, "bottom": 5}.get(region, 0)
+        # Explicit doctor field lines
+        if any(
+            re.search(p, t)
+            for p in [
+                r"\bdoctor\b",
+                r"doctor\s*name",
+                r"\bphysician\b",
+                r"醫生",
+                r"医生",
+            ]
+        ):
+            nm = extract_from_doctor_field(line)
+            if nm:
+                sc = 0
+                if "doctor name" in t:
+                    sc += 80
+                elif re.search(r"\bdoctor\b", t):
+                    sc += 65
+                elif (
+                    re.search(r"\bphysician\b", t)
+                    or ("醫生" in line)
+                    or ("医生" in line)
+                ):
+                    sc += 55
 
-            evidence = line
-            if i + 1 < len(lines):
-                evidence = f"{line} | NEXT: {lines[i+1]}"
-            cands.append(Candidate(nm, evidence, "doctor_field", region, sc))
+                sc += {"top": 15, "full": 10, "bottom": 5}.get(region, 0)
+                cands.append(Candidate(nm, line, "doctor_field", region, sc))
 
+        # Fallback DR lines
         if re.search(r"^\s*dr\.?\s+", t) or re.search(r"\bdr\.\s*[A-Za-z]", line):
-            nm2 = extract_from_dr_line(line)
-            if nm2:
-                sc = 40 + {"top": 12, "full": 8, "bottom": 10}.get(region, 0)
-                cands.append(Candidate(nm2, line, "dr_line", region, sc))
+            nm = extract_from_dr_line(line)
+            if nm:
+                sc = 40
+                sc += {"top": 12, "full": 8, "bottom": 10}.get(region, 0)
+                cands.append(Candidate(nm, line, "dr_line", region, sc))
 
     return cands
 
 
 def dedupe_candidates(cands: List[Candidate]) -> List[Candidate]:
+    """
+    Merge duplicates and boost score if repeated.
+    """
     by_key: Dict[str, Candidate] = {}
 
     def key_of(name: str) -> str:
-        k = normalize_text(name).replace(".", "").replace(",", "").strip()
+        k = normalize_text(name)
+        k = k.replace(".", "").replace(",", "").strip()
         return _norm_spaces(k)
 
     for c in cands:
         k = key_of(c.name)
         if k in by_key:
-            by_key[k].score += 15
+            existing = by_key[k]
+            existing.score += 15
+            # Prefer doctor_field over dr_line if duplicate
+            if existing.source != "doctor_field" and c.source == "doctor_field":
+                c.score = existing.score
+                by_key[k] = c
+            else:
+                by_key[k] = existing
         else:
             by_key[k] = c
 
@@ -404,9 +335,14 @@ def crop_region(img, region: str):
     return img
 
 
-def clean_name1(name: str) -> str:
+def clean_name_for_output(name: str) -> str:
+    """
+    Output format: uppercase, no punctuation, no leading DR.
+    """
     name = re.sub(r"[.,]", "", name)
-    return " ".join(name.split()).upper().replace("DR ", "")
+    name = " ".join(name.split()).upper()
+    name = name.replace("DR ", "").strip()
+    return name
 
 
 # -----------------------------
@@ -421,13 +357,11 @@ def extract_doctor_name(image_path: str, debug: bool = False) -> Dict:
 
     for region in ["top", "full", "bottom"]:
         region_img = crop_region(img, region)
-        lines = multi_pass_ocr_lines(
-            region_img, debug_tag=f"{os.path.basename(image_path)}::{region}"
-        )
+        lines = multi_pass_ocr_lines(region_img)
 
         if debug:
-            print(f"\n--- OCR ({region}) first 80 lines ---")
-            print("\n".join(lines[:80]))
+            print(f"\n--- OCR ({region}) first 40 lines ---")
+            print("\n".join(lines[:40]))
 
         all_candidates.extend(generate_candidates(lines, region=region))
 
@@ -442,23 +376,71 @@ def extract_doctor_name(image_path: str, debug: bool = False) -> Dict:
         }
 
     best = cands[0]
-    conf = 0.90 if best.source == "doctor_field" else 0.80
+
+    if best.source == "doctor_field" and best.score >= 70:
+        conf = 0.95
+    elif best.source == "doctor_field":
+        conf = 0.90
+    elif best.source == "dr_line" and best.score >= 55:
+        conf = 0.85
+    else:
+        conf = 0.80
 
     return {
-        "doctor_name": clean_name1(best.name),
+        "doctor_name": clean_name_for_output(best.name),
         "confidence": conf,
         "evidence": [best.evidence],
         "meta": {"source": best.source, "region": best.region, "score": best.score},
     }
 
 
+# -----------------------------
+# CLI / batch runner
+# -----------------------------
+def _is_valid_image_file(filename: str) -> bool:
+    ext = os.path.splitext(filename)[1].lower()
+    return ext in {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"}
+
+
 if __name__ == "__main__":
     input_dir = "preprocessed_out"
 
-    # Only run one file first so we can see exactly where it hangs
-    test_file = "sample2__ocr_gray.png"
-    test_path = os.path.join(input_dir, test_file)
+    for filename in os.listdir(input_dir):
+        if "__ocr_binary" not in filename:
+            continue
+        if not _is_valid_image_file(filename):
+            continue
 
-    print(f"Testing single file: {test_path}")
-    out = extract_doctor_name(test_path, debug=True)
-    print("Result:", out)
+        p_bin = os.path.join(input_dir, filename)
+        p_gray = p_bin.replace("__ocr_binary", "__ocr_gray")
+
+        print(f"Processing {filename}...")
+
+        # Try binary
+        doctor: Optional[Dict] = None
+        try:
+            doctor = extract_doctor_name(p_bin, debug=False)
+        except Exception as e:
+            # uncomment if you want to see errors:
+            # print("Binary error:", e)
+            doctor = None
+
+        # Decide if fallback is needed
+        doctor_name = None
+        conf = 0.0
+        if isinstance(doctor, dict):
+            doctor_name = doctor.get("doctor_name")
+            conf = float(doctor.get("confidence", 0.0) or 0.0)
+
+        # Fallback to grayscale if no name (or low confidence, optional)
+        if (not doctor_name) and os.path.exists(p_gray):
+            print("Binary failed → trying grayscale")
+            try:
+                doctor = extract_doctor_name(p_gray, debug=False)
+            except Exception as e:
+                # uncomment if you want to see errors:
+                print("Gray error:", e)
+                doctor = None
+
+        print("Result:", doctor)
+        print()
