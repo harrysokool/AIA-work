@@ -4,7 +4,8 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
 import cv2
-import pytesseract
+
+from paddleocr import PaddleOCR
 
 
 # -----------------------------
@@ -80,41 +81,112 @@ def normalize_text(s: str) -> str:
 
 
 # -----------------------------
-# OCR helpers
+# PaddleOCR singleton
 # -----------------------------
-def ocr_lines_from_tesseract(img, psm: int, min_conf: float = 0.0) -> List[str]:
-    """
-    OCR via image_to_data and reconstruct lines using (block, par, line).
-    Keeps low-confidence words to avoid losing key fields on noisy scans.
-    """
-    config = f"--oem 3 --psm {psm}"
-    data = pytesseract.image_to_data(
-        img, config=config, output_type=pytesseract.Output.DICT
-    )
+# lang="en" is usually best for English receipts.
+# If you truly have mixed Chinese/English and want OCR to read Chinese too, try lang="ch".
+_PADDLE_OCR = PaddleOCR(
+    use_angle_cls=True,
+    lang="en",
+)
 
-    n = len(data["text"])
-    lines: Dict[Tuple[int, int, int], List[str]] = {}
 
-    for i in range(n):
-        word = (data["text"][i] or "").strip()
-        if not word:
+# -----------------------------
+# OCR helpers (PaddleOCR)
+# -----------------------------
+def ocr_lines_from_paddle(img_bgr, min_conf: float = 0.0) -> List[str]:
+    """
+    Run PaddleOCR and reconstruct text lines by grouping boxes with similar y.
+    Input: BGR or grayscale image (we convert to BGR if needed).
+    Output: list of reconstructed lines (strings).
+    """
+    if img_bgr is None:
+        return []
+
+    if len(img_bgr.shape) == 2:
+        img_bgr = cv2.cvtColor(img_bgr, cv2.COLOR_GRAY2BGR)
+
+    result = _PADDLE_OCR.ocr(img_bgr, cls=True)
+
+    items = []
+    # result is typically: [ [ [box, (text, conf)], ... ] ]
+    if not result or not result[0]:
+        return []
+
+    for det in result[0]:
+        box, (text, conf) = det
+        if text is None:
             continue
-
-        conf_raw = data["conf"][i]
+        text = str(text).strip()
+        if not text:
+            continue
         try:
-            conf = float(conf_raw)
+            conf = float(conf)
         except Exception:
-            conf = -1.0
-
-        # Keep almost everything; only drop if explicitly below min_conf
-        if conf != -1.0 and conf < min_conf:
+            conf = 0.0
+        if conf < min_conf:
             continue
 
-        key = (data["block_num"][i], data["par_num"][i], data["line_num"][i])
-        lines.setdefault(key, []).append(word)
+        xs = [p[0] for p in box]
+        ys = [p[1] for p in box]
+        x_min, _ = min(xs), max(xs)
+        y_min, y_max = min(ys), max(ys)
+        y_center = (y_min + y_max) / 2.0
 
-    out_lines = [_norm_spaces(" ".join(lines[k])) for k in sorted(lines.keys())]
-    out_lines = [ln for ln in out_lines if len(ln) >= 2]
+        items.append(
+            {
+                "text": text,
+                "conf": conf,
+                "x_min": x_min,
+                "y_min": y_min,
+                "y_center": y_center,
+                "height": max(1.0, (y_max - y_min)),
+            }
+        )
+
+    if not items:
+        return []
+
+    # Sort by vertical position first
+    items.sort(key=lambda d: (d["y_center"], d["x_min"]))
+
+    # Group into lines
+    lines: List[List[dict]] = []
+    current: List[dict] = []
+    current_y: Optional[float] = None
+    current_h: float = 0.0
+
+    for it in items:
+        if current_y is None:
+            current = [it]
+            current_y = it["y_center"]
+            current_h = it["height"]
+            continue
+
+        # Threshold adapts to text size; receipts vary a lot
+        thresh = max(10.0, 0.6 * max(current_h, it["height"]))
+        if abs(it["y_center"] - current_y) <= thresh:
+            current.append(it)
+            # update running average y for stability
+            current_y = (current_y * (len(current) - 1) + it["y_center"]) / len(current)
+            current_h = max(current_h, it["height"])
+        else:
+            lines.append(current)
+            current = [it]
+            current_y = it["y_center"]
+            current_h = it["height"]
+
+    if current:
+        lines.append(current)
+
+    # Sort each line left-to-right and join
+    out_lines: List[str] = []
+    for line_items in lines:
+        line_items.sort(key=lambda d: d["x_min"])
+        s = _norm_spaces(" ".join(d["text"] for d in line_items))
+        if len(s) >= 2:
+            out_lines.append(s)
+
     return out_lines
 
 
@@ -145,20 +217,11 @@ def score_ocr_text(lines: List[str]) -> int:
 
 def multi_pass_ocr_lines(img) -> List[str]:
     """
-    Try multiple PSMs and choose the OCR output that best captures anchors.
+    With PaddleOCR, multi-PSM isn't relevant.
+    We can still do a couple passes with different min_conf if you want.
+    Here we just do one pass (keeps behavior stable).
     """
-    psm_candidates = [6, 4, 11, 3]
-    best_lines: List[str] = []
-    best_score = -10
-
-    for psm in psm_candidates:
-        lines = ocr_lines_from_tesseract(img, psm=psm, min_conf=0.0)
-        s = score_ocr_text(lines)
-        if s > best_score:
-            best_score = s
-            best_lines = lines
-
-    return best_lines
+    return ocr_lines_from_paddle(img, min_conf=0.0)
 
 
 # -----------------------------
@@ -181,7 +244,8 @@ def looks_like_non_doctor_line(line: str) -> bool:
 def clean_name(raw: str) -> str:
     """
     Clean and normalize extracted name.
-    Supports title case and ALL CAPS with commas.
+    Keeps LASTNAME FIRST order as it appears in the receipt.
+    Does NOT attempt to reorder tokens.
     """
     s = raw.strip()
 
@@ -204,7 +268,7 @@ def clean_name(raw: str) -> str:
     s = re.sub(r"[^A-Za-z\s\.,]", " ", s)
     s = _norm_spaces(s)
 
-    # Normalize leading Dr (NO inline flags)
+    # Normalize leading Dr
     s = re.sub(r"^\s*dr\s*\.\s*", "Dr. ", s, flags=re.IGNORECASE)
     s = re.sub(r"^\s*dr\s+", "Dr. ", s, flags=re.IGNORECASE)
 
@@ -214,6 +278,7 @@ def clean_name(raw: str) -> str:
 def extract_from_doctor_field(line: str) -> Optional[str]:
     """
     Extract name from explicit Doctor / Doctor Name field lines.
+    Example: "Doctor: Lee Dai Shing"
     """
     m = re.search(r"\bdoctor\s*name\b\s*[:\-]?\s*(.+)$", line, flags=re.IGNORECASE)
     if not m:
@@ -334,10 +399,10 @@ def crop_region(img, region: str):
     return img
 
 
-def clean_name1(name):
+def clean_name1(name: str) -> str:
     # remove punctuation
     name = re.sub(r"[.,]", "", name)
-    # normalize spaces + lowercase
+    # normalize spaces + uppercase, remove DR prefix token
     return " ".join(name.split()).upper().replace("DR ", "")
 
 
@@ -353,6 +418,7 @@ def extract_doctor_name(image_path: str, debug: bool = False) -> Dict:
 
     for region in ["top", "full", "bottom"]:
         region_img = crop_region(img, region)
+        # PaddleOCR expects BGR or will still work with gray; we convert inside
         lines = multi_pass_ocr_lines(region_img)
 
         if debug:
@@ -382,6 +448,7 @@ def extract_doctor_name(image_path: str, debug: bool = False) -> Dict:
     else:
         conf = 0.80
 
+    # IMPORTANT: we do NOT reorder tokens; we keep "Lee Dai Shing" as-is.
     return {
         "doctor_name": clean_name1(best.name),
         "confidence": conf,
@@ -402,14 +469,16 @@ if __name__ == "__main__":
 
         print(f"Processing {filename}...")
 
+        doctor = None
+
         # Try binary
         try:
             doctor = extract_doctor_name(p_bin, debug=False)
         except Exception:
             doctor = None
 
-        # Fallback to grayscale
-        if not doctor or doctor.strip() == "":
+        # Fallback to grayscale if missing name
+        if (not doctor) or (not doctor.get("doctor_name")):
             if os.path.exists(p_gray):
                 print("Binary failed → trying grayscale")
                 try:
