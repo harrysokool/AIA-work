@@ -13,7 +13,7 @@ ALPHABET_SET: Set[str] = set("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
 CONCURRECY_LIMIT = 10
 OUTPUT_FILE = "doctors.pkl"
 BASE_URL = "https://www.mchk.org.hk/english/list_register/list.php"
-BASE_PARAMS = {"page": "", "ipp": "20", "type": ""}
+BASE_PARAMS = {"page": "", "ipp": "200", "type": ""}
 DOCTOR_TYPE = ["L", "O", "P", "N", "M"]
 
 
@@ -36,8 +36,8 @@ def save_doctors() -> None:
 async def fetch_page(
     session: aiohttp.ClientSession, doctor_type: str, page: int
 ) -> str:
-    params = {"page": str(page), "ipp": "20", "type": doctor_type}
-    async with session.get(BASE_URL, params=params) as resp:
+    params = {"page": str(page), "ipp": "200", "type": doctor_type}
+    async with session.get(BASE_URL, params=params, ssl=False) as resp:
         return await resp.text()
 
 
