@@ -8,20 +8,16 @@ __pycache__/
 *.py[cod]
 
 # Virtual environments
-<<<<<<< HEAD
-.venv_ocr
-venv_fetch_agent
-=======
-.venv_check_doctor
-.venv_fetch_agent
->>>>>>> 518c15bf92c33bf0afcec37c53bfb7825d5f5f06
-.venv/
-venv/
+.venv*/
+venv*/
 env/
 
 # Generated data
 python/data/agents/
-python/data/doctor_receipts/
+python/scripts/search_registered_doctors/doctor_receipts/
+python/scripts/search_registered_doctors/preprocessed_out/
+python/scripts/search_registered_doctors/doctors.pkl
+python/scripts/search_registered_doctors/doctors.txt
 
 # Playwright cache (optional)
 .playwright/

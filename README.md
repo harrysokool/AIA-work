@@ -8,8 +8,8 @@ Automation utilities for:
 ## Repo layout
 
 - `python/` main scripts and data
-- `python/data/` cached agent datasets and exports
-- `python/scripts/search_agent/` agent registry tools
+- `python/data/agents/` cached agent datasets and exports
+- `python/scripts/search_agent/` agent registry tools (HK + Macau)
 - `python/scripts/search_registered_doctors/` doctor OCR + verification pipeline
 
 ## Setup
@@ -21,13 +21,8 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Additional dependencies for the OCR pipeline (not listed in `requirements.txt` yet):
-
-```bash
-pip install aiohttp beautifulsoup4 lxml numpy opencv-python pytesseract
-```
-
-You also need the system Tesseract binary installed and available on your PATH.
+You also need the system Tesseract binary installed and available on your PATH
+for the OCR pipeline.
 
 ## Scripts
 
@@ -61,6 +56,13 @@ You also need the system Tesseract binary installed and available on your PATH.
 - `python/scripts/search_registered_doctors/run_pipeline.py`  
   End-to-end pipeline: preprocess `doctor_receipts/`, run OCR, and verify
   against the HKMC list.
+
+### Data & artifacts
+
+- Agent data and exports live under `python/data/agents/`.
+- Doctor receipt inputs and OCR outputs live under
+  `python/scripts/search_registered_doctors/doctor_receipts/` and
+  `python/scripts/search_registered_doctors/preprocessed_out/` (ignored in git).
 
 ## Quick start (OCR pipeline)
 
