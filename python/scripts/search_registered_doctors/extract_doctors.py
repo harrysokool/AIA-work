@@ -1,15 +1,16 @@
-import re
 import os
+import re
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
 import cv2
-import pytesseract
+import numpy as np
+import easyocr
 
 
-# -----------------------------
-# Config: anchors + normalization
-# -----------------------------
+# =========================================================
+# Config: anchors + normalization (same as your original)
+# =========================================================
 ANCHOR_PATTERNS = [
     r"doctor\s*name",
     r"\bdoctor\b",
@@ -79,49 +80,125 @@ def normalize_text(s: str) -> str:
     return t
 
 
-# -----------------------------
-# OCR helpers
-# -----------------------------
-def ocr_lines_from_tesseract(img, psm: int, min_conf: float = 0.0) -> List[str]:
+# =========================================================
+# EasyOCR: reader cache + helpers
+# =========================================================
+
+# Global cache so we don't re-initialize EasyOCR.Reader repeatedly.
+_READER_CACHE: Dict[Tuple[Tuple[str, ...], bool], easyocr.Reader] = {}
+
+
+def get_easyocr_reader(
+    langs: Tuple[str, ...] = ("en",), gpu: bool = False
+) -> easyocr.Reader:
     """
-    OCR via image_to_data and reconstruct lines using (block, par, line).
-    Keeps low-confidence words to avoid losing key fields on noisy scans.
+    Lazily create and cache an EasyOCR Reader for the given languages.
     """
-    config = f"--oem 3 --psm {psm}"
-    data = pytesseract.image_to_data(
-        img, config=config, output_type=pytesseract.Output.DICT
-    )
+    key = (tuple(langs), bool(gpu))
+    if key not in _READER_CACHE:
+        _READER_CACHE[key] = easyocr.Reader(list(langs), gpu=gpu, verbose=False)
+    return _READER_CACHE[key]
 
-    n = len(data["text"])
-    lines: Dict[Tuple[int, int, int], List[str]] = {}
 
-    for i in range(n):
-        word = (data["text"][i] or "").strip()
-        if not word:
+def _to_rgb(img: np.ndarray) -> np.ndarray:
+    """
+    Ensure a 3-channel RGB image for EasyOCR.
+    """
+    if img is None:
+        return img
+    if img.ndim == 2:
+        # grayscale -> RGB
+        return cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
+    # BGR -> RGB
+    return cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+
+
+def _group_boxes_into_lines(
+    results: List[Tuple[List[List[float]], str, float]], img_h: int
+) -> List[str]:
+    """
+    Convert EasyOCR detections into line-wise strings by grouping on y-centers
+    and ordering left->right within each line.
+
+    results: list of (bbox, text, conf) where bbox is 4 points [[x1,y1],...[x4,y4]]
+    """
+    if not results:
+        return []
+
+    # Compute y-center and x-left for each detection
+    tokens = []
+    for bbox, text, conf in results:
+        if not text or (isinstance(conf, (int, float)) and conf < 0):
             continue
+        pts = np.array(bbox, dtype=float)
+        y_center = float(pts[:, 1].mean())
+        x_left = float(pts[:, 0].min())
+        tokens.append((y_center, x_left, text.strip()))
 
-        conf_raw = data["conf"][i]
-        try:
-            conf = float(conf_raw)
-        except Exception:
-            conf = -1.0
+    if not tokens:
+        return []
 
-        # Keep almost everything; only drop if explicitly below min_conf
-        if conf != -1.0 and conf < min_conf:
+    # Cluster into lines by y with an adaptive threshold
+    tokens.sort(key=lambda x: (x[0], x[1]))
+    y_thresh = max(8.0, img_h * 0.012)  # ~1.2% of height or 8px, whichever larger
+
+    lines: List[List[Tuple[float, float, str]]] = []
+    for y, x, t in tokens:
+        if not lines:
+            lines.append([(y, x, t)])
             continue
+        # If close to last line's average y, append; else start new line
+        last = lines[-1]
+        last_y = sum(p[0] for p in last) / len(last)
+        if abs(y - last_y) <= y_thresh:
+            last.append((y, x, t))
+        else:
+            lines.append([(y, x, t)])
 
-        key = (data["block_num"][i], data["par_num"][i], data["line_num"][i])
-        lines.setdefault(key, []).append(word)
-
-    out_lines = [_norm_spaces(" ".join(lines[k])) for k in sorted(lines.keys())]
-    out_lines = [ln for ln in out_lines if len(ln) >= 2]
+    # Sort each line left->right; join tokens
+    out_lines = []
+    for line in lines:
+        line.sort(key=lambda p: p[1])
+        sent = _norm_spaces(" ".join(p[2] for p in line if p[2]))
+        if len(sent) >= 2:
+            out_lines.append(sent)
     return out_lines
 
 
+def ocr_lines_from_easyocr(
+    img: np.ndarray,
+    langs: Tuple[str, ...] = ("en",),
+    gpu: bool = False,
+    min_conf: float = 0.0,
+    paragraph: bool = False,
+) -> List[str]:
+    """
+    Run EasyOCR and reconstruct line strings.
+    paragraph=True lets EasyOCR merge detections into longer chunks; we still re-group to lines.
+    """
+    reader = get_easyocr_reader(langs=langs, gpu=gpu)
+    rgb = _to_rgb(img)
+    results = reader.readtext(rgb, detail=True, paragraph=paragraph)
+    # Keep entries >= min_conf (or when conf not provided)
+    filtered = []
+    for item in results:
+        if len(item) == 3:
+            bbox, text, conf = item
+        else:
+            # Some versions return (bbox, text, conf, ...). We only care first 3.
+            bbox, text, conf = item[0], item[1], item[2] if len(item) > 2 else 0.0
+        if (isinstance(conf, (int, float)) and conf < min_conf) or not text:
+            continue
+        filtered.append((bbox, text, conf))
+
+    h = rgb.shape[0]
+    return _group_boxes_into_lines(filtered, img_h=h)
+
+
+# =========================================================
+# OCR scoring (same logic you had)
+# =========================================================
 def score_ocr_text(lines: List[str]) -> int:
-    """
-    Score OCR output based on whether we see strong anchors.
-    """
     joined = "\n".join(lines)
     t = normalize_text(joined)
     score = 0
@@ -143,33 +220,91 @@ def score_ocr_text(lines: List[str]) -> int:
     return score
 
 
-def multi_pass_ocr_lines(img) -> List[str]:
+# =========================================================
+# Multi-pass OCR strategy (replacing your Tesseract PSM tries)
+# =========================================================
+def _autocontrast(gray: np.ndarray, clip_hist_percent: float = 1.0) -> np.ndarray:
+    hist = cv2.calcHist([gray], [0], None, [256], [0, 256]).ravel()
+    cdf = hist.cumsum()
+    total = float(cdf[-1])
+    low = int(np.searchsorted(cdf, total * clip_hist_percent / 100.0))
+    high = int(np.searchsorted(cdf, total * (1 - clip_hist_percent / 100.0)))
+    if high <= low:
+        return gray
+    scale = 255.0 / (high - low)
+    adjusted = ((gray - low) * scale).clip(0, 255).astype(np.uint8)
+    return adjusted
+
+
+def _binarize(gray: np.ndarray) -> np.ndarray:
+    blur = cv2.GaussianBlur(gray, (3, 3), 0)
+    th = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
+    return th
+
+
+def _prepare_variants(img: np.ndarray) -> List[np.ndarray]:
     """
-    Try multiple PSMs and choose the OCR output that best captures anchors.
+    Prepare a few pre-processing variants to improve recognition.
+    Returns color images (BGR) suitable for conversion to RGB later.
     """
-    psm_candidates = [6, 4, 11, 3]
+    # Start from color BGR
+    if img.ndim == 2:
+        bgr = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+    else:
+        bgr = img.copy()
+
+    gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+    ac = _autocontrast(gray, 1.0)
+    bin_img = _binarize(ac)
+
+    # Create 3-channel versions for EasyOCR
+    v1 = bgr  # original
+    v2 = cv2.cvtColor(ac, cv2.COLOR_GRAY2BGR)  # autocontrast
+    v3 = cv2.cvtColor(bin_img, cv2.COLOR_GRAY2BGR)  # Otsu binary
+
+    # Also try a mild upscale for small text
+    h, w = gray.shape[:2]
+    upscale = cv2.resize(
+        v2, (int(w * 1.25), int(h * 1.25)), interpolation=cv2.INTER_CUBIC
+    )
+
+    return [v1, v2, v3, upscale]
+
+
+def multi_pass_ocr_lines(
+    img: np.ndarray,
+    langs: Tuple[str, ...] = ("en",),
+    gpu: bool = False,
+) -> List[str]:
+    """
+    Try several pre-processing variants and paragraph modes; pick the best by anchor score.
+    """
+    variants = _prepare_variants(img)
     best_lines: List[str] = []
     best_score = -10
 
-    for psm in psm_candidates:
-        lines = ocr_lines_from_tesseract(img, psm=psm, min_conf=0.0)
-        s = score_ocr_text(lines)
-        if s > best_score:
-            best_score = s
-            best_lines = lines
+    for paragraph in (False, True):
+        for v in variants:
+            lines = ocr_lines_from_easyocr(
+                v, langs=langs, gpu=gpu, min_conf=0.0, paragraph=paragraph
+            )
+            s = score_ocr_text(lines)
+            if s > best_score:
+                best_score = s
+                best_lines = lines
 
     return best_lines
 
 
-# -----------------------------
-# Candidate extraction + scoring
-# -----------------------------
+# =========================================================
+# Candidate extraction + scoring (same as your original)
+# =========================================================
 @dataclass
 class Candidate:
     name: str
     evidence: str
     source: str  # "doctor_field" or "dr_line"
-    region: str  # "top", "full", "bottom"
+    region: str  # "top", "full", or "bottom"
     score: int
 
 
@@ -213,20 +348,26 @@ def clean_name(raw: str) -> str:
 
 def extract_from_doctor_field(line: str) -> Optional[str]:
     """
-    Extract name from explicit Doctor / Doctor Name field lines.
+    Extract name from explicit Doctor / Doctor Name / Physician field lines.
     """
     m = re.search(r"\bdoctor\s*name\b\s*[:\-]?\s*(.+)$", line, flags=re.IGNORECASE)
     if not m:
         m = re.search(r"\bdoctor\b\s*[:\-]?\s*(.+)$", line, flags=re.IGNORECASE)
     if not m:
-        return None
+        m = re.search(r"\bphysician\b\s*[:\-]?\s*(.+)$", line, flags=re.IGNORECASE)
+    if not m:
+        # Chinese terms
+        m = re.search(r"(醫生|医生)\s*[:：\-]?\s*(.+)$", line)
+        if m:
+            rest = m.group(2).strip()
+        else:
+            return None
+    else:
+        rest = m.group(1).strip()
 
-    rest = m.group(1).strip()
     name = clean_name(rest)
-
     if len(name.replace("Dr. ", "").split()) < 2:
         return None
-
     return name
 
 
@@ -323,10 +464,10 @@ def dedupe_candidates(cands: List[Candidate]) -> List[Candidate]:
     return sorted(by_key.values(), key=lambda x: x.score, reverse=True)
 
 
-# -----------------------------
-# Region cropping
-# -----------------------------
-def crop_region(img, region: str):
+# =========================================================
+# Region cropping (same as your original)
+# =========================================================
+def crop_region(img: np.ndarray, region: str) -> np.ndarray:
     h, w = img.shape[:2]
     if region == "top":
         return img[0 : int(h * 0.33), :]
@@ -345,19 +486,24 @@ def clean_name_for_output(name: str) -> str:
     return name
 
 
-# -----------------------------
+# =========================================================
 # Public API
-# -----------------------------
-def extract_doctor_name(image_path: str, debug: bool = False) -> Dict:
-    img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
-    if img is None:
+# =========================================================
+def extract_doctor_name(
+    image_path: str,
+    debug: bool = False,
+    langs: Tuple[str, ...] = ("en",),  # add 'ch_tra','ch_sim' if needed
+    gpu: bool = False,
+) -> Dict:
+    img_color = cv2.imread(image_path, cv2.IMREAD_COLOR)
+    if img_color is None:
         raise FileNotFoundError(f"Could not read image: {image_path}")
 
     all_candidates: List[Candidate] = []
 
     for region in ["top", "full", "bottom"]:
-        region_img = crop_region(img, region)
-        lines = multi_pass_ocr_lines(region_img)
+        region_img = crop_region(img_color, region)
+        lines = multi_pass_ocr_lines(region_img, langs=langs, gpu=gpu)
 
         if debug:
             print(f"\n--- OCR ({region}) first 40 lines ---")
@@ -394,15 +540,20 @@ def extract_doctor_name(image_path: str, debug: bool = False) -> Dict:
     }
 
 
-# -----------------------------
-# CLI / batch runner
-# -----------------------------
+# =========================================================
+# CLI / batch runner (same folder layout/behavior as yours)
+# =========================================================
 def _is_valid_image_file(filename: str) -> bool:
     ext = os.path.splitext(filename)[1].lower()
     return ext in {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"}
 
 
 if __name__ == "__main__":
+    # Adjust languages here if your docs include Chinese:
+    # langs = ("en", "ch_tra", "ch_sim")
+    langs = ("en",)
+    gpu = False
+
     input_dir = "preprocessed_out"
 
     for filename in os.listdir(input_dir):
@@ -416,12 +567,11 @@ if __name__ == "__main__":
 
         print(f"Processing {filename}...")
 
-        # Try binary
+        # Try binary first (as your original code does)
         doctor: Optional[Dict] = None
         try:
-            doctor = extract_doctor_name(p_bin, debug=False)
+            doctor = extract_doctor_name(p_bin, debug=False, langs=langs, gpu=gpu)
         except Exception as e:
-            # uncomment if you want to see errors:
             # print("Binary error:", e)
             doctor = None
 
@@ -432,13 +582,12 @@ if __name__ == "__main__":
             doctor_name = doctor.get("doctor_name")
             conf = float(doctor.get("confidence", 0.0) or 0.0)
 
-        # Fallback to grayscale if no name (or low confidence, optional)
+        # Fallback to grayscale if no name (or low confidence)
         if (not doctor_name) and os.path.exists(p_gray):
             print("Binary failed → trying grayscale")
             try:
-                doctor = extract_doctor_name(p_gray, debug=False)
+                doctor = extract_doctor_name(p_gray, debug=False, langs=langs, gpu=gpu)
             except Exception as e:
-                # uncomment if you want to see errors:
                 print("Gray error:", e)
                 doctor = None
 
