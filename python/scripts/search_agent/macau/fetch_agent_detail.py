@@ -89,7 +89,7 @@ def extract_detail_params(agents: list[dict]) -> list[dict] | None:
 async def fetch(
     session: aiohttp.ClientSession, param: dict, company_list: set[str]
 ) -> dict | None:
-    async with session.get(DETAIL_URL, params=param, headers=HEADERS) as response:
+    async with session.get(DETAIL_URL, params=param, headers=HEADERS, ssl=False) as response:
         if response.status != 200:
             raise RetryableFetchError(f"HTTP {response.status}")
 
