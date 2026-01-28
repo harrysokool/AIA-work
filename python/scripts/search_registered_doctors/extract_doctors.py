@@ -554,11 +554,11 @@ if __name__ == "__main__":
     langs = ("en",)
     gpu = False
 
-    input_dir = "preprocessed_out"
+    input_dir = "doctor_receipts"
 
     for filename in os.listdir(input_dir):
-        if "__ocr_binary" not in filename:
-            continue
+        # if "__ocr_binary" not in filename:
+        #     continue
         if not _is_valid_image_file(filename):
             continue
 
@@ -583,13 +583,13 @@ if __name__ == "__main__":
             conf = float(doctor.get("confidence", 0.0) or 0.0)
 
         # Fallback to grayscale if no name (or low confidence)
-        if (not doctor_name) and os.path.exists(p_gray):
-            print("Binary failed → trying grayscale")
-            try:
-                doctor = extract_doctor_name(p_gray, debug=False, langs=langs, gpu=gpu)
-            except Exception as e:
-                print("Gray error:", e)
-                doctor = None
+        # if (not doctor_name) and os.path.exists(p_gray):
+        #     print("Binary failed → trying grayscale")
+        #     try:
+        #         doctor = extract_doctor_name(p_gray, debug=False, langs=langs, gpu=gpu)
+        #     except Exception as e:
+        #         print("Gray error:", e)
+        #         doctor = None
 
         print("Result:", doctor)
         print()
