@@ -9,6 +9,7 @@ __pycache__/
 
 # Virtual environments
 .venv_ocr
+venv_fetch_agent
 .venv/
 venv/
 env/

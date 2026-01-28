@@ -11,7 +11,7 @@ from typing import Any
 
 
 class RetryableFetchError(Exception):
-    pass
+    """Signals a transient error that may succeed on retry."""
 
 
 DETAIL_URL = "https://iiep.amcm.gov.mo/platform-enquiry-service/public/api/v1/web/enquiry/licenses/detail"
@@ -89,9 +89,7 @@ def extract_detail_params(agents: list[dict]) -> list[dict] | None:
 async def fetch(
     session: aiohttp.ClientSession, param: dict, company_list: set[str]
 ) -> dict | None:
-    async with session.get(
-        DETAIL_URL, params=param, headers=HEADERS, ssl=False
-    ) as response:
+    async with session.get(DETAIL_URL, params=param, headers=HEADERS) as response:
         if response.status != 200:
             raise RetryableFetchError(f"HTTP {response.status}")
 
@@ -229,14 +227,20 @@ async def fetch_agent_detail_and_export(category: str, company_list: set[str]) -
     if detail_params is None:
         return
 
+    timeout = aiohttp.ClientTimeout(total=30, connect=10, sock_read=20)
     connector = aiohttp.TCPConnector(limit=CONCURRECY_LIMIT, force_close=False)
-    async with aiohttp.ClientSession(connector=connector) as session:
+    async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
         tasks = [
             fetch_with_retry(session, param, company_list) for param in detail_params
         ]
-        results = await asyncio.gather(*tasks)
+        results = await asyncio.gather(*tasks, return_exceptions=True)
 
-    detail_agents: list[dict] = [r for r in results if r is not None]
+    detail_agents: list[dict] = []
+    for r in results:
+        if isinstance(r, Exception):
+            print(f"Task failed: {r}")
+        elif r:
+            detail_agents.append(r)
 
     # Save processed JSON (detail objects)
     processed_file = PROCESSED_DATA_DIR / f"{category}.json"
