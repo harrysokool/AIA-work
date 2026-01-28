@@ -1,11 +1,14 @@
 import os
 from fetch_doctor import load_doctors_set
-from image_processing import preprocess_folder
 from extract_doctors import extract_doctor_name
 
-# Input/output directories
+# Input directory (raw images only)
 RAW_DIR = "doctor_receipts"
-PRE_DIR = "preprocessed_out"
+
+
+def _is_valid_image_file(filename: str) -> bool:
+    ext = os.path.splitext(filename)[1].lower()
+    return ext in {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"}
 
 
 def run_pipeline():
@@ -13,58 +16,41 @@ def run_pipeline():
     print("      HK Doctor Receipt Verification     ")
     print("========================================\n")
 
-    # load doctor list
+    # 1) Load doctor list
     print("[1] Loading HKMC registered doctors list...")
     hk_doctors = load_doctors_set()
     print(f"[INFO] Loaded {len(hk_doctors)} doctors.\n")
 
-    # 2. Preprocess raw images
-    print("[2] Preprocessing all receipt images...")
-    preprocess_folder(RAW_DIR, PRE_DIR)
-    print("[INFO] Preprocessing done.\n")
-
-    # 3. Extract doctor names from processed files
-    print("[3] Extracting doctor names...\n")
+    # 2) Extract doctor names directly from RAW receipts (no preprocessing)
+    print("[2] Extracting doctor names from raw images...\n")
 
     results = []
 
-    for filename in os.listdir(PRE_DIR):
-        if "__ocr_binary" not in filename:
-            continue  # skip non-binary files
+    for filename in os.listdir(RAW_DIR):
+        if not _is_valid_image_file(filename):
+            continue
 
-        binary_path = os.path.join(PRE_DIR, filename)
-        gray_path = binary_path.replace("__ocr_binary", "__ocr_gray")
+        image_path = os.path.join(RAW_DIR, filename)
 
         print(f"--- Processing {filename} ---")
 
-        # Try Binary First
         try:
-            result = extract_doctor_name(binary_path, debug=False)
-        except Exception:
+            result = extract_doctor_name(image_path, debug=False)
+        except Exception as e:
             result = None
-
-        # Fallback to grayscale
-        if (not result) or (not result.get("doctor_name")):
-            if os.path.exists(gray_path):
-                print("Binary failed → trying grayscale...")
-                try:
-                    result = extract_doctor_name(gray_path, debug=False)
-                except Exception:
-                    result = None
+            print(f"[ERROR] OCR failed: {e}")
 
         if result:
             doctor_name = result.get("doctor_name")
-            confidence = result.get("confidence")
+            confidence = float(result.get("confidence", 0.0) or 0.0)
         else:
             doctor_name = None
-            confidence = 0
+            confidence = 0.0
 
         print("Extracted name:  ", doctor_name)
         print("Confidence:      ", confidence)
 
-        # -------------------------------------------
-        # 4. Check if doctor is in HK Doctor list
-        # -------------------------------------------
+        # 3) Check if doctor is in HK Doctor list
         is_registered = doctor_name in hk_doctors if doctor_name else False
 
         print("HK Registered?:  ", is_registered)
