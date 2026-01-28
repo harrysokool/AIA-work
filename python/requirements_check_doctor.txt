@@ -1,0 +1,5 @@
+paddleocr
+opencv-python
+numpy
+beautifulsoup4
+aiohttp
