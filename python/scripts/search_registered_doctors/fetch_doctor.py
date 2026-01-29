@@ -5,15 +5,21 @@ import asyncio
 import aiohttp
 from typing import Optional, List, Set
 import pickle
+import random
+
+
+class RetryableFetchError(Exception):
+    """Signals a transient error that may succeed on retry."""
 
 
 doctors_name: Set[str] = set()
 ALPHABET_SET: Set[str] = set("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
 
 CONCURRECY_LIMIT = 1
+MAX_RETRIES = 5
 OUTPUT_FILE = "doctors.pkl"
 BASE_URL = "https://www.mchk.org.hk/english/list_register/list.php"
-BASE_PARAMS = {"page": "", "ipp": "200", "type": ""}
+BASE_PARAMS = {"page": "", "ipp": "20", "type": ""}
 DOCTOR_TYPE = ["L", "O", "P", "N", "M"]
 
 
@@ -36,9 +42,39 @@ def save_doctors() -> None:
 async def fetch_page(
     session: aiohttp.ClientSession, doctor_type: str, page: int
 ) -> str:
-    params = {"page": str(page), "ipp": "200", "type": doctor_type}
+    params = {"page": str(page), "ipp": "20", "type": doctor_type}
     async with session.get(BASE_URL, params=params, ssl=False) as resp:
+        if resp.status != 200:
+            raise RetryableFetchError(f"HTTP {resp.status}")
         return await resp.text()
+
+
+async def fetch_page_with_retry(
+    session: aiohttp.ClientSession,
+    doctor_type: str,
+    page: int,
+    retries: int = MAX_RETRIES,
+) -> str | None:
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            return await fetch_page(session, doctor_type, page)
+
+        except aiohttp.ClientError as e:
+            err = RetryableFetchError(f"Network error: {e}")
+        except RetryableFetchError as e:
+            err = e
+        except Exception as e:
+            err = RetryableFetchError(f"Unexpected error: {e}")
+
+        print(f"[Attempt {attempt}] {err}")
+
+        if attempt < retries:
+            wait_time = (2 ** (attempt - 1)) + random.unifrom(0, 0.5)
+            print(f"Retrying in {wait_time:.2f} seconds...")
+            await asyncio.sleep(wait_time)
+        else:
+            print(f"Failed after {retries} attempts")
+            return None
 
 
 def find_table(soup: BeautifulSoup) -> Optional[Tag]:
