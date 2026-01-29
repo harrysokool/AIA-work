@@ -10,7 +10,7 @@ import pickle
 doctors_name: Set[str] = set()
 ALPHABET_SET: Set[str] = set("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
 
-CONCURRECY_LIMIT = 10
+CONCURRECY_LIMIT = 1
 OUTPUT_FILE = "doctors.pkl"
 BASE_URL = "https://www.mchk.org.hk/english/list_register/list.php"
 BASE_PARAMS = {"page": "", "ipp": "200", "type": ""}
@@ -54,7 +54,7 @@ def add_doctors(rows: List[Tag]) -> bool:
 
     for row in rows:
         tds = row.find_all("td")
-        if len(tds) == 2:  # no more doctors in the table
+        if tds is None:
             found_doctor = False
             break
 
@@ -65,7 +65,11 @@ def add_doctors(rows: List[Tag]) -> bool:
 
         for name in lines:
             if name and name[0] in ALPHABET_SET:
-                doctors_name.add(name.replace(",", "").upper())
+                res_name = name.replace(",", "").upper()
+                if res_name not in doctors_name:
+                    doctors_name.add(res_name)
+                else:
+                    print(f"{res_name} already in the list")
 
     return found_doctor
 
@@ -76,7 +80,7 @@ async def worker(
 
     while True:
         page: int = await queue.get()
-
+        found_doctor = True
         try:
             # here need to fetch the page
             html: str = await fetch_page(session, doctor_type, page)
@@ -92,6 +96,7 @@ async def worker(
             rows: List[Tag] = table.find_all("tr")[2:]
             if not rows:
                 queue.task_done()
+                found_doctor = False
                 break
 
             # flag to see if we should continue search for the next page
@@ -114,8 +119,9 @@ async def fetch_doctors(doctor_type: str) -> None:
     queue: asyncio.Queue[int] = asyncio.Queue()
     await queue.put(1)
 
+    timeout = aiohttp.ClientTimeout(total=30, connect=10, sock_read=20)
     connector = aiohttp.TCPConnector(limit=CONCURRECY_LIMIT, force_close=False)
-    async with aiohttp.ClientSession(connector=connector) as session:
+    async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
 
         # spawn workers to process pages concurrently
         workers: List[asyncio.Task] = [

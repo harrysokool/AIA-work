@@ -101,7 +101,7 @@ def _to_rgb(img: np.ndarray) -> np.ndarray:
 
 
 # =========================================================
-# OCR grouping (same idea as yours)
+# OCR grouping
 # =========================================================
 def _group_boxes_into_lines(
     results: List[Tuple[List[List[float]], str, float]], img_h: int
@@ -266,7 +266,7 @@ def _variants_fallback(img: np.ndarray) -> List[np.ndarray]:
 
 
 # =========================================================
-# Candidate extraction (same logic)
+# Candidate extraction
 # =========================================================
 @dataclass
 class Candidate:
@@ -348,7 +348,13 @@ def generate_candidates(lines: List[str], region: str) -> List[Candidate]:
 
         if any(
             re.search(p, t)
-            for p in [r"\bdoctor\b", r"doctor\s*name", r"\bphysician\b", r"醫生", r"医生"]
+            for p in [
+                r"\bdoctor\b",
+                r"doctor\s*name",
+                r"\bphysician\b",
+                r"醫生",
+                r"医生",
+            ]
         ):
             nm = extract_from_doctor_field(line)
             if nm:
@@ -357,7 +363,11 @@ def generate_candidates(lines: List[str], region: str) -> List[Candidate]:
                     sc += 80
                 elif re.search(r"\bdoctor\b", t):
                     sc += 65
-                elif re.search(r"\bphysician\b", t) or ("醫生" in line) or ("医生" in line):
+                elif (
+                    re.search(r"\bphysician\b", t)
+                    or ("醫生" in line)
+                    or ("医生" in line)
+                ):
                     sc += 55
                 sc += {"top": 15, "full": 10, "bottom": 5}.get(region, 0)
                 cands.append(Candidate(nm, line, "doctor_field", region, sc))
@@ -495,7 +505,11 @@ def extract_doctor_name(
 
     for region, paragraph, speed in stages:
         region_img = crop_region(img_color, region)
-        variants = _variants_fast(region_img) if speed == "fast" else _variants_fallback(region_img)
+        variants = (
+            _variants_fast(region_img)
+            if speed == "fast"
+            else _variants_fallback(region_img)
+        )
 
         lines, cands, s = _ocr_try(
             img=region_img,
@@ -508,7 +522,9 @@ def extract_doctor_name(
         )
 
         if debug:
-            print(f"\n--- Stage region={region} paragraph={paragraph} speed={speed} anchorScore={s} ---")
+            print(
+                f"\n--- Stage region={region} paragraph={paragraph} speed={speed} anchorScore={s} ---"
+            )
             print("\n".join(lines[:40]))
 
         if cands:
