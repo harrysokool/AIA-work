@@ -5,16 +5,22 @@ import asyncio
 import aiohttp
 from typing import Optional, List, Set
 import pickle
+import random
+import requests
+
+
+class RetryableFetchError(Exception):
+    """Signals a transient error that may succeed on retry."""
 
 
 doctors_name: Set[str] = set()
 ALPHABET_SET: Set[str] = set("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
 
 CONCURRECY_LIMIT = 1
+MAX_RETRIES = 5
 OUTPUT_FILE = "doctors.pkl"
 BASE_URL = "https://www.mchk.org.hk/english/list_register/list.php"
-BASE_PARAMS = {"page": "", "ipp": "200", "type": ""}
-DOCTOR_TYPE = ["L", "O", "P", "N", "M"]
+DOCTOR_TYPE = ["O", "P", "N", "M"]
 
 
 def timer() -> None:
@@ -36,9 +42,39 @@ def save_doctors() -> None:
 async def fetch_page(
     session: aiohttp.ClientSession, doctor_type: str, page: int
 ) -> str:
-    params = {"page": str(page), "ipp": "200", "type": doctor_type}
+    params = {"page": str(page), "ipp": "20", "type": doctor_type}
     async with session.get(BASE_URL, params=params, ssl=False) as resp:
+        if resp.status != 200:
+            raise RetryableFetchError(f"HTTP {resp.status}")
         return await resp.text()
+
+
+async def fetch_page_with_retry(
+    session: aiohttp.ClientSession,
+    doctor_type: str,
+    page: int,
+    retries: int = MAX_RETRIES,
+) -> str | None:
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            return await fetch_page(session, doctor_type, page)
+
+        except aiohttp.ClientError as e:
+            err = RetryableFetchError(f"Network error: {e}")
+        except RetryableFetchError as e:
+            err = e
+        except Exception as e:
+            err = RetryableFetchError(f"Unexpected error: {e}")
+
+        print(f"[Attempt {attempt}] {err}")
+
+        if attempt < retries:
+            wait_time = (2 ** (attempt - 1)) + random.unifrom(0, 0.5)
+            print(f"Retrying in {wait_time:.2f} seconds...")
+            await asyncio.sleep(wait_time)
+        else:
+            print(f"Failed after {retries} attempts")
+            return None
 
 
 def find_table(soup: BeautifulSoup) -> Optional[Tag]:
@@ -137,6 +173,61 @@ async def fetch_doctors(doctor_type: str) -> None:
             w.cancel()
 
 
+def valid_page(page: int) -> bool:
+    if page < 1:
+        return False
+
+    valid = False
+
+
+def expo_probing() -> int:
+    page = 1
+    session = requests.Session()
+    # Optional: DEV-only if you must bypass SSL verification
+    # session.verify = False
+
+    # Helpful headers; improves acceptance by some servers
+    session.headers.update(
+        {
+            "User-Agent": "Mozilla/5.0 (compatible; AuditScraper/1.0; +https://your-org.example)"
+        }
+    )
+
+    while True:
+        params = {"page": str(page), "ipp": "20", "type": "L"}
+        try:
+            resp = session.get(BASE_URL, params=params, timeout=15)
+            if resp.status_code != 200:
+                return 0
+        except requests.RequestException:
+            return 0
+
+        soup: BeautifulSoup = BeautifulSoup(resp.text, "lxml")
+        table: Optional[Tag] = find_table(soup)
+        if table is None:
+            return 0
+
+        rows: List[Tag] = table.find_all("tr")[2:]
+        if rows and "沒有相關搜尋結果" in str(rows[0]):
+            return page
+
+        page *= 2
+
+
+def fetch_page_for_type_L() -> bool:
+    return False
+
+
+# def search_last_page() -> int:
+#     start_page = 1
+#     end_page = expo_probing()
+
+#     while start_page < end_page:
+#         mid = start_page + (end_page - start_page) // 2
+
+#     return page
+
+
 async def main() -> Set[str]:
     # for each doctor type, we scrape them separately and concurrently
     tasks = [fetch_doctors(doc_type) for doc_type in DOCTOR_TYPE]
@@ -154,13 +245,15 @@ def load_doctors_set() -> Set[str]:
 
 if __name__ == "__main__":
     # timer for the program
-    threading.Thread(target=timer, daemon=True).start()
+    # threading.Thread(target=timer, daemon=True).start()
 
-    tic = time.perf_counter()
-    asyncio.run(main())
-    toc = time.perf_counter()
+    # tic = time.perf_counter()
+    # asyncio.run(main())
+    # toc = time.perf_counter()
 
-    print(f"Time took: {toc - tic:0.4f}s")
+    print(expo_probing())
+
+    # print(f"Time took: {toc - tic:0.4f}s")
 
 
 # L: 16466, 15974, I think for this doctor type, some names are repeated, that's why numbers don't match
