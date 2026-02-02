@@ -218,14 +218,14 @@ def fetch_page_for_type_L() -> bool:
     return False
 
 
-def search_last_page() -> int:
-    start_page = 1
-    end_page = expo_probing()
+# def search_last_page() -> int:
+#     start_page = 1
+#     end_page = expo_probing()
 
-    while start_page < end_page:
-        mid = start_page + (end_page - start_page) // 2
+#     while start_page < end_page:
+#         mid = start_page + (end_page - start_page) // 2
 
-    return page
+#     return page
 
 
 async def main() -> Set[str]:
