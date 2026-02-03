@@ -7,6 +7,8 @@ from typing import Optional, List, Set
 import pickle
 import random
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 
 class RetryableFetchError(Exception):
@@ -21,6 +23,21 @@ MAX_RETRIES = 5
 OUTPUT_FILE = "doctors.pkl"
 BASE_URL = "https://www.mchk.org.hk/english/list_register/list.php"
 DOCTOR_TYPE = ["O", "P", "N", "M"]
+
+
+def make_session() -> requests.Session:
+    session = requests.Session()
+    session.headers.update({"User-Agent": "AuditScraper/1.0"})
+    retries = Retry(
+        total=3,
+        backoff_factor=0.5,
+        status_forcelist=[429, 500, 502, 503, 504],
+        allowed_methods=frozenset(["GET"]),
+    )
+    adapter = HTTPAdapter(max_retries=retries)
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+    return session
 
 
 def timer() -> None:
@@ -209,7 +226,9 @@ def valid_page(page: int, session) -> bool:
 
     try:
         response = session.get(BASE_URL, params=params, timeout=5)
-        response.raise_for_status()
+        if response.status_code != 200:
+            return False
+
         html = response.text
         soup = BeautifulSoup(html, "lxml")
 
@@ -218,23 +237,19 @@ def valid_page(page: int, session) -> bool:
             return False
 
         rows: List[Tag] = table.find_all("tr")[2:]
-        if rows and "沒有相關搜尋結果" in str(rows[0]):
+        if not rows:
+            return False
+        first_text = rows[0].get_text(strip=True)
+        if "沒有相關搜尋結果" in first_text:
             return False
 
-    except Exception as e:
-        print(f"Error on page {page}: {e}")
+        return True
+    except requests.RequestException:
         return False
-
-    return True
 
 
 def search_last_page() -> int:
-    session = requests.Session()
-    session.headers.update(
-        {
-            "User-Agent": "Mozilla/5.0 (compatible; AuditScraper/1.0; +https://your-org.example)"
-        }
-    )
+    session = make_session()
     start_page = 1
     end_page = expo_probing(session)
     if end_page is None:
@@ -273,7 +288,7 @@ if __name__ == "__main__":
     # asyncio.run(main())
     # toc = time.perf_counter()
 
-    search_last_page()
+    print(search_last_page())
 
     # print(f"Time took: {toc - tic:0.4f}s")
 
