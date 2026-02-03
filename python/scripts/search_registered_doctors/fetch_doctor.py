@@ -6,24 +6,25 @@ import aiohttp
 from typing import Optional, List, Set
 import pickle
 import random
+import re
 
 
 class RetryableFetchError(Exception):
     """Signals a transient error that may succeed on retry."""
 
 
-doctors_name: Set[str] = set()
+doctors_name = {}
 set_lock = asyncio.Lock()
 ALPHABET_SET: Set[str] = set("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
 
 CONCURRENCY_LIMIT = 20
 SEM = asyncio.Semaphore(CONCURRENCY_LIMIT)
 MAX_RETRIES = 5
-REQUEST_PAUSE = (0.2, 0.6)
+REQUEST_PAUSE = (0.05, 0.15)
 
 OUTPUT_FILE = "doctors.pkl"
 BASE_URL = "https://www.mchk.org.hk/english/list_register/list.php"
-DOCTOR_TYPE = ["L", "O", "P", "N", "M"]
+DOCTOR_TYPE = ["L", "O", "P", "M", "N"]
 
 
 # helper functions
@@ -119,9 +120,9 @@ async def add_doctors(rows: List[Tag]) -> None:
                 continue
             if name[0] in ALPHABET_SET:
                 res_name = name.replace(",", "").upper()
-                if res_name not in doctors_name:
-                    async with set_lock:
-                        doctors_name.add(res_name)
+                res_name = re.sub(r"\s*\([^)]*\)", "", res_name)
+                async with set_lock:
+                    doctors_name[res_name] = doctors_name.get(res_name, 0) + 1
 
 
 async def worker(
@@ -160,8 +161,13 @@ async def fetch_doctors(doctor_type: str) -> None:
     for p in range(1, CONCURRENCY_LIMIT + 1):
         await queue.put(p)
 
-    timeout = aiohttp.ClientTimeout(total=30, connect=15, sock_read=45)
-    connector = aiohttp.TCPConnector(limit=CONCURRENCY_LIMIT)
+    timeout = aiohttp.ClientTimeout(total=30, connect=10, sock_read=45)
+    connector = aiohttp.TCPConnector(
+        limit=CONCURRENCY_LIMIT,
+        limit_per_host=CONCURRENCY_LIMIT,
+        enable_cleanup_closed=True,
+        ttl_dns_cache=300,
+    )
     headers = {"User-Agent": "AuditScraper/1.0 (+you@example.com)"}
     async with aiohttp.ClientSession(
         timeout=timeout, connector=connector, headers=headers
@@ -186,6 +192,7 @@ async def main() -> Set[str]:
     tasks = [fetch_doctors(doc_type) for doc_type in DOCTOR_TYPE]
     await asyncio.gather(*tasks)
 
+    print(dict(sorted(doctors_name.items(), key=lambda x: x[1])))
     print(len(doctors_name))
     save_doctors()
 
@@ -199,3 +206,10 @@ if __name__ == "__main__":
     toc = time.perf_counter()
 
     print(f"Time took: {toc - tic:0.4f}s")
+
+# type, actual doctor count, doctor count without duplicate name
+# L, 16466, 15974
+# O, 438, 438
+# P, 555, 555
+# M, 367, 367
+# N, 154, 154
