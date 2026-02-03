@@ -173,59 +173,81 @@ async def fetch_doctors(doctor_type: str) -> None:
             w.cancel()
 
 
-def valid_page(page: int) -> bool:
-    if page < 1:
-        return False
-
-    valid = False
-
-
-def expo_probing() -> int:
+def expo_probing(session) -> int:
     page = 1
-    session = requests.Session()
-    # Optional: DEV-only if you must bypass SSL verification
-    # session.verify = False
-
-    # Helpful headers; improves acceptance by some servers
-    session.headers.update(
-        {
-            "User-Agent": "Mozilla/5.0 (compatible; AuditScraper/1.0; +https://your-org.example)"
-        }
-    )
-
     while True:
         params = {"page": str(page), "ipp": "20", "type": "L"}
         try:
             resp = session.get(BASE_URL, params=params, timeout=15)
             if resp.status_code != 200:
-                return 0
+                return page
         except requests.RequestException:
-            return 0
+            return None
 
         soup: BeautifulSoup = BeautifulSoup(resp.text, "lxml")
         table: Optional[Tag] = find_table(soup)
         if table is None:
-            return 0
+            return page
 
         rows: List[Tag] = table.find_all("tr")[2:]
+        if not rows:
+            return page
         if rows and "沒有相關搜尋結果" in str(rows[0]):
             return page
+
+        if page > 1_000_000:
+            return None
 
         page *= 2
 
 
-def fetch_page_for_type_L() -> bool:
-    return False
+def valid_page(page: int, session) -> bool:
+    if page < 1:
+        return False
+
+    params = {"page": str(page), "ipp": "20", "type": "L"}
+
+    try:
+        response = session.get(BASE_URL, params=params, timeout=5)
+        response.raise_for_status()
+        html = response.text
+        soup = BeautifulSoup(html, "lxml")
+
+        table: Optional[Tag] = find_table(soup)
+        if table is None:
+            return False
+
+        rows: List[Tag] = table.find_all("tr")[2:]
+        if rows and "沒有相關搜尋結果" in str(rows[0]):
+            return False
+
+    except Exception as e:
+        print(f"Error on page {page}: {e}")
+        return False
+
+    return True
 
 
-# def search_last_page() -> int:
-#     start_page = 1
-#     end_page = expo_probing()
+def search_last_page() -> int:
+    session = requests.Session()
+    session.headers.update(
+        {
+            "User-Agent": "Mozilla/5.0 (compatible; AuditScraper/1.0; +https://your-org.example)"
+        }
+    )
+    start_page = 1
+    end_page = expo_probing(session)
+    if end_page is None:
+        return None
 
-#     while start_page < end_page:
-#         mid = start_page + (end_page - start_page) // 2
+    while start_page < end_page:
+        mid = start_page + (end_page - start_page) // 2
+        if valid_page(mid, session):
+            start_page = mid + 1
+        else:
+            end_page = mid - 1
 
-#     return page
+    return start_page - 1
 
 
 async def main() -> Set[str]:
@@ -251,7 +273,7 @@ if __name__ == "__main__":
     # asyncio.run(main())
     # toc = time.perf_counter()
 
-    print(expo_probing())
+    search_last_page()
 
     # print(f"Time took: {toc - tic:0.4f}s")
 
