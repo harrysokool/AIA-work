@@ -18,8 +18,9 @@ class RetryableFetchError(Exception):
 doctors_name: Set[str] = set()
 ALPHABET_SET: Set[str] = set("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
 
-CONCURRENCY_LIMIT = 20
+CONCURRENCY_LIMIT = 12
 MAX_RETRIES = 5
+REQUEST_PAUSE = (0.05, 0.15)
 
 OUTPUT_FILE = "doctors.pkl"
 BASE_URL = "https://www.mchk.org.hk/english/list_register/list.php"
@@ -71,6 +72,7 @@ async def fetch_page(
     session: aiohttp.ClientSession, doctor_type: str, page: int
 ) -> str:
     params = {"page": str(page), "ipp": "20", "type": doctor_type}
+    await asyncio.sleep(random.uniform(*REQUEST_PAUSE))
     async with session.get(BASE_URL, params=params, ssl=False) as resp:
         if resp.status != 200:
             raise RetryableFetchError(f"HTTP {resp.status}")
@@ -139,7 +141,9 @@ async def worker(
             # here need to fetch the page
             html: str | None = await fetch_page_with_retry(session, doctor_type, page)
             if not html:
-                break
+                await asyncio.sleep(random.uniform(0.2, 0.6))
+                await queue.put(page)
+                continue
 
             # try to find the target table on the website
             soup = BeautifulSoup(html, "lxml")
@@ -156,7 +160,6 @@ async def worker(
             await queue.put(page + CONCURRENCY_LIMIT)
         except Exception as e:
             print(f"Error on page {page}: {e}")
-            break
         finally:
             queue.task_done()
 
@@ -166,8 +169,8 @@ async def fetch_doctors(doctor_type: str) -> None:
     for p in range(1, CONCURRENCY_LIMIT + 1):
         await queue.put(p)
 
-    timeout = aiohttp.ClientTimeout(total=30, connect=10, sock_read=20)
-    connector = aiohttp.TCPConnector(limit=CONCURRENCY_LIMIT, force_close=False)
+    timeout = aiohttp.ClientTimeout(total=30, connect=15, sock_read=45)
+    connector = aiohttp.TCPConnector(limit=CONCURRENCY_LIMIT)
     async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
         # spawn workers to process pages concurrently
         workers: List[asyncio.Task] = [
