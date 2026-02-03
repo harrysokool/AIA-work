@@ -276,68 +276,6 @@ async def fetch_doctors(doctor_type: str) -> None:
             w.cancel()
 
 
-async def fetch_type_L(session: aiohttp.ClientSession, param: dict):
-    async with session.get(BASE_URL, params=param, ssl=False) as response:
-        if response.status != 200:
-            raise RetryableFetchError(f"HTTP {response.status}")
-
-        html: str = await response.text()
-        soup: BeautifulSoup = BeautifulSoup(html, "lxml")
-
-        table: Optional[Tag] = find_table(soup)
-        if table is None:
-            return
-
-        rows: List[Tag] = table.find_all("tr")[2:]
-        if not rows:
-            return
-
-        add_doctors(rows)
-
-
-async def fetch_type_L_retry(
-    session: aiohttp.ClientSession, param: dict, retries: int = MAX_RETRIES
-):
-    for attempt in range(1, retries + 1):
-        try:
-            async with SEM:
-                return await fetch_type_L(session, param)
-
-        except aiohttp.ClientError as e:
-            err = RetryableFetchError(f"Network error: {e}")
-        except RetryableFetchError as e:
-            err = e
-        except Exception as e:
-            err = RetryableFetchError(f"Unexpected error: {e}")
-
-        print(f"[Attempt {attempt}] {err}")
-
-        if attempt < retries:
-            wait_time = (2 ** (attempt - 1)) + random.uniform(0, 0.5)
-            print(f"Retrying in {wait_time:.2f} seconds...")
-            await asyncio.sleep(wait_time)
-        else:
-            print(f"Failed after {retries} attempts for {param}")
-            return None
-
-
-async def fetch_doctors_type_L(params: list[dict]):
-    if not params:
-        return
-
-    timeout = aiohttp.ClientTimeout(total=30, connect=10, sock_read=20)
-    connector = aiohttp.TCPConnector(limit=CONCURRECY_LIMIT, force_close=False)
-    async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
-        tasks = [fetch_type_L_retry(session, param) for param in params]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-
-    for res in results:
-        if isinstance(res, Exception):
-            print(f"Task failed: {res}")
-        elif res:
-            continue
-
-
 async def main() -> Set[str]:
     # for each doctor type, we scrape them separately and concurrently
     # this is only for doctor type "O", "P", "N", "M", will do separetly with type "L"
@@ -350,7 +288,6 @@ async def main() -> Set[str]:
         raise RuntimeError("Could not determine last page for type L")
 
     params = [{"page": str(p), "ipp": "20", "type": "L"} for p in range(1, last_page)]
-    await fetch_doctors_type_L(params)
 
     print(len(doctors_name))
     # save_doctors()
