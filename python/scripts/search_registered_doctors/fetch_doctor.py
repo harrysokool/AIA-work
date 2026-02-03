@@ -18,16 +18,23 @@ class RetryableFetchError(Exception):
 doctors_name: Set[str] = set()
 ALPHABET_SET: Set[str] = set("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
 
-CONCURRECY_LIMIT = 10
+CONCURRENCY_LIMIT = 20
 MAX_RETRIES = 5
-SEM = asyncio.Semaphore(CONCURRECY_LIMIT)
 
 OUTPUT_FILE = "doctors.pkl"
 BASE_URL = "https://www.mchk.org.hk/english/list_register/list.php"
-DOCTOR_TYPE = ["O", "P", "N", "M"]
+DOCTOR_TYPE = ["L", "O", "P", "N", "M"]
 
 
 # helper functions
+def save_doctors() -> None:
+    with open(OUTPUT_FILE, "wb") as f:
+        pickle.dump(doctors_name, f)
+    with open("doctors.txt", "w", encoding="utf-8") as f:
+        for name in doctors_name:
+            f.write(name + "\n")
+
+
 def load_doctors_set() -> Set[str]:
     """
     Load the scraped registered doctors from doctors.pkl.
@@ -59,89 +66,7 @@ def timer() -> None:
         counter += 1
 
 
-def save_doctors() -> None:
-    with open(OUTPUT_FILE, "wb") as f:
-        pickle.dump(doctors_name, f)
-    with open("doctors.txt", "w", encoding="utf-8") as f:
-        for name in doctors_name:
-            f.write(name + "\n")
-
-
-def expo_probing(session) -> int:
-    page = 1
-    while True:
-        params = {"page": str(page), "ipp": "20", "type": "L"}
-        try:
-            resp = session.get(BASE_URL, params=params, timeout=15)
-            if resp.status_code != 200:
-                return page
-        except requests.RequestException:
-            return None
-
-        soup: BeautifulSoup = BeautifulSoup(resp.text, "lxml")
-        table: Optional[Tag] = find_table(soup)
-        if table is None:
-            return page
-
-        rows: List[Tag] = table.find_all("tr")[2:]
-        if not rows:
-            return page
-        if rows and "沒有相關搜尋結果" in str(rows[0]):
-            return page
-
-        if page > 1_000_000:
-            return None
-
-        page *= 2
-
-
-def valid_page(page: int, session) -> bool:
-    if page < 1:
-        return False
-
-    params = {"page": str(page), "ipp": "20", "type": "L"}
-
-    try:
-        response = session.get(BASE_URL, params=params, timeout=5)
-        if response.status_code != 200:
-            return False
-
-        html = response.text
-        soup = BeautifulSoup(html, "lxml")
-
-        table: Optional[Tag] = find_table(soup)
-        if table is None:
-            return False
-
-        rows: List[Tag] = table.find_all("tr")[2:]
-        if not rows:
-            return False
-        first_text = rows[0].get_text(strip=True)
-        if "沒有相關搜尋結果" in first_text:
-            return False
-
-        return True
-    except requests.RequestException:
-        return False
-
-
-def search_last_page() -> int:
-    session = make_session()
-    start_page = 1
-    end_page = expo_probing(session)
-    if end_page is None:
-        return None
-
-    while start_page < end_page:
-        mid = start_page + (end_page - start_page) // 2
-        if valid_page(mid, session):
-            start_page = mid + 1
-        else:
-            end_page = mid - 1
-
-    return start_page
-
-
+# functions
 async def fetch_page(
     session: aiohttp.ClientSession, doctor_type: str, page: int
 ) -> str:
@@ -158,7 +83,7 @@ async def fetch_page_with_retry(
     page: int,
     retries: int = MAX_RETRIES,
 ) -> str | None:
-    for attempt in range(1, MAX_RETRIES + 1):
+    for attempt in range(1, retries + 1):
         try:
             return await fetch_page(session, doctor_type, page)
 
@@ -188,84 +113,66 @@ def find_table(soup: BeautifulSoup) -> Optional[Tag]:
     return table
 
 
-def add_doctors(rows: List[Tag]) -> bool:
-    found_doctor = False
-
+def add_doctors(rows: List[Tag]) -> None:
     for row in rows:
         tds = row.find_all("td")
-        if tds is None:
-            found_doctor = False
-            break
-
-        found_doctor = True
+        if not tds or len(tds) < 2:
+            continue
 
         name_td = tds[1]
         lines = name_td.get_text("\n", strip=True).split("\n")
-
         for name in lines:
-            if name and name[0] in ALPHABET_SET:
+            if not name:
+                continue
+            if name[0] in ALPHABET_SET:
                 res_name = name.replace(",", "").upper()
                 if res_name not in doctors_name:
                     doctors_name.add(res_name)
-                else:
-                    print(f"{res_name} already in the list")
-
-    return found_doctor
 
 
 async def worker(
     doctor_type: str, session: aiohttp.ClientSession, queue: asyncio.Queue[int]
 ) -> None:
-
     while True:
         page: int = await queue.get()
-        found_doctor = True
         try:
             # here need to fetch the page
-            html: str = await fetch_page(session, doctor_type, page)
-            soup: BeautifulSoup = BeautifulSoup(html, "lxml")
+            html: str | None = await fetch_page_with_retry(session, doctor_type, page)
+            if not html:
+                break
 
             # try to find the target table on the website
-            table: Optional[Tag] = find_table(soup)
+            soup = BeautifulSoup(html, "lxml")
+            table = find_table(soup)
             if table is None:
-                queue.task_done()
                 break
 
-            # skipping the headers
-            rows: List[Tag] = table.find_all("tr")[2:]
-            if not rows:
-                queue.task_done()
-                found_doctor = False
+            rows = table.find_all("tr")[2:] if table else []
+            if not rows or "沒有相關搜尋結果" in rows[0].get_text(strip=True):
                 break
 
-            # flag to see if we should continue search for the next page
-            found_doctor: bool = add_doctors(rows)
+            add_doctors(rows)
 
-            if found_doctor:
-                await queue.put(page + 1)
-            else:
-                queue.task_done()
-                break
-
-            queue.task_done()
+            await queue.put(page + CONCURRENCY_LIMIT)
         except Exception as e:
             print(f"Error on page {page}: {e}")
-            queue.task_done()
             break
+        finally:
+            queue.task_done()
 
 
 async def fetch_doctors(doctor_type: str) -> None:
     queue: asyncio.Queue[int] = asyncio.Queue()
-    await queue.put(1)
+    for p in range(1, CONCURRENCY_LIMIT + 1):
+        await queue.put(p)
 
     timeout = aiohttp.ClientTimeout(total=30, connect=10, sock_read=20)
-    connector = aiohttp.TCPConnector(limit=CONCURRECY_LIMIT, force_close=False)
+    connector = aiohttp.TCPConnector(limit=CONCURRENCY_LIMIT, force_close=False)
     async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
-
         # spawn workers to process pages concurrently
         workers: List[asyncio.Task] = [
             asyncio.create_task(worker(doctor_type, session, queue))
-            for _ in range(CONCURRECY_LIMIT)
+            for _ in range(CONCURRENCY_LIMIT)
         ]
 
         # wait until scraping is done
@@ -278,19 +185,11 @@ async def fetch_doctors(doctor_type: str) -> None:
 
 async def main() -> Set[str]:
     # for each doctor type, we scrape them separately and concurrently
-    # this is only for doctor type "O", "P", "N", "M", will do separetly with type "L"
     tasks = [fetch_doctors(doc_type) for doc_type in DOCTOR_TYPE]
     await asyncio.gather(*tasks)
 
-    # first get all the params so we can do async all together for doctor type "L"
-    last_page = search_last_page()
-    if not last_page:
-        raise RuntimeError("Could not determine last page for type L")
-
-    params = [{"page": str(p), "ipp": "20", "type": "L"} for p in range(1, last_page)]
-
     print(len(doctors_name))
-    # save_doctors()
+    save_doctors()
 
 
 if __name__ == "__main__":
