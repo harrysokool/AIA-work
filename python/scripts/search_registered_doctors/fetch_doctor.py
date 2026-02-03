@@ -6,9 +6,6 @@ import aiohttp
 from typing import Optional, List, Set
 import pickle
 import random
-import requests
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
 
 
 class RetryableFetchError(Exception):
@@ -16,11 +13,13 @@ class RetryableFetchError(Exception):
 
 
 doctors_name: Set[str] = set()
+set_lock = asyncio.Lock()
 ALPHABET_SET: Set[str] = set("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
 
-CONCURRENCY_LIMIT = 12
+CONCURRENCY_LIMIT = 20
+SEM = asyncio.Semaphore(CONCURRENCY_LIMIT)
 MAX_RETRIES = 5
-REQUEST_PAUSE = (0.05, 0.15)
+REQUEST_PAUSE = (0.2, 0.6)
 
 OUTPUT_FILE = "doctors.pkl"
 BASE_URL = "https://www.mchk.org.hk/english/list_register/list.php"
@@ -44,21 +43,6 @@ def load_doctors_set() -> Set[str]:
         return pickle.load(f)
 
 
-def make_session() -> requests.Session:
-    session = requests.Session()
-    session.headers.update({"User-Agent": "AuditScraper/1.0"})
-    retries = Retry(
-        total=3,
-        backoff_factor=0.5,
-        status_forcelist=[429, 500, 502, 503, 504],
-        allowed_methods=frozenset(["GET"]),
-    )
-    adapter = HTTPAdapter(max_retries=retries)
-    session.mount("http://", adapter)
-    session.mount("https://", adapter)
-    return session
-
-
 def timer() -> None:
     counter = 1
     while True:
@@ -73,10 +57,17 @@ async def fetch_page(
 ) -> str:
     params = {"page": str(page), "ipp": "20", "type": doctor_type}
     await asyncio.sleep(random.uniform(*REQUEST_PAUSE))
-    async with session.get(BASE_URL, params=params, ssl=False) as resp:
-        if resp.status != 200:
-            raise RetryableFetchError(f"HTTP {resp.status}")
-        return await resp.text()
+    async with SEM:
+        async with session.get(BASE_URL, params=params) as resp:
+            if resp.status == 429:
+                raise RetryableFetchError("HTTP 429 Too Many Requests")
+            if 500 <= resp.status < 600:
+                raise RetryableFetchError(f"HTTP {resp.status} Server Error")
+            if resp.status != 200:
+                # Non-retryable (likely)
+                text = await resp.text()
+                raise Exception(f"HTTP {resp.status}: {text[:200]}")
+            return await resp.text()
 
 
 async def fetch_page_with_retry(
@@ -115,7 +106,7 @@ def find_table(soup: BeautifulSoup) -> Optional[Tag]:
     return table
 
 
-def add_doctors(rows: List[Tag]) -> None:
+async def add_doctors(rows: List[Tag]) -> None:
     for row in rows:
         tds = row.find_all("td")
         if not tds or len(tds) < 2:
@@ -129,7 +120,8 @@ def add_doctors(rows: List[Tag]) -> None:
             if name[0] in ALPHABET_SET:
                 res_name = name.replace(",", "").upper()
                 if res_name not in doctors_name:
-                    doctors_name.add(res_name)
+                    async with set_lock:
+                        doctors_name.add(res_name)
 
 
 async def worker(
@@ -142,7 +134,6 @@ async def worker(
             html: str | None = await fetch_page_with_retry(session, doctor_type, page)
             if not html:
                 await asyncio.sleep(random.uniform(0.2, 0.6))
-                await queue.put(page)
                 continue
 
             # try to find the target table on the website
@@ -155,7 +146,7 @@ async def worker(
             if not rows or "沒有相關搜尋結果" in rows[0].get_text(strip=True):
                 break
 
-            add_doctors(rows)
+            await add_doctors(rows)
 
             await queue.put(page + CONCURRENCY_LIMIT)
         except Exception as e:
@@ -171,7 +162,10 @@ async def fetch_doctors(doctor_type: str) -> None:
 
     timeout = aiohttp.ClientTimeout(total=30, connect=15, sock_read=45)
     connector = aiohttp.TCPConnector(limit=CONCURRENCY_LIMIT)
-    async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
+    headers = {"User-Agent": "AuditScraper/1.0 (+you@example.com)"}
+    async with aiohttp.ClientSession(
+        timeout=timeout, connector=connector, headers=headers
+    ) as session:
         # spawn workers to process pages concurrently
         workers: List[asyncio.Task] = [
             asyncio.create_task(worker(doctor_type, session, queue))
@@ -184,6 +178,7 @@ async def fetch_doctors(doctor_type: str) -> None:
         # cancel the workers because workers run forever in a while True loop
         for w in workers:
             w.cancel()
+        await asyncio.gather(*workers, return_exceptions=True)
 
 
 async def main() -> Set[str]:
@@ -204,10 +199,3 @@ if __name__ == "__main__":
     toc = time.perf_counter()
 
     print(f"Time took: {toc - tic:0.4f}s")
-
-
-# L: 16466, 15974, I think for this doctor type, some names are repeated, that's why numbers don't match
-# O: 438, 438
-# P: 555, 555
-# M: 367, 367
-# N: 155, 155
