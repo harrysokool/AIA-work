@@ -15,9 +15,9 @@ BASE_URL = "https://www.smp-council.org.hk/hkifd/browse.php"
 MAX_RETRIES = 5
 
 
-def fetch_page(session: requests.Session, page: int):
+def fetch_page(session: requests.Session, page: int) -> str | None:
     params = {"serach": f"PT{str(page)}"}
-    resp = session.get(BASE_URL, params=params)
+    resp = session.get(BASE_URL, params=params, timeout=30)
     if resp.status_code != 200:
         raise RetryableFetchError("Error when accessing website")
     return resp.text
@@ -25,10 +25,11 @@ def fetch_page(session: requests.Session, page: int):
 
 def fetch_page_with_retries(
     session: requests.Session, page: int, retries: int = MAX_RETRIES
-):
+) -> str | None:
     for attempt in range(1, retries + 1):
         try:
             return fetch_page(session, page)
+
         except RetryableFetchError as e:
             err = e
         except Exception as e:
@@ -53,16 +54,24 @@ def find_tables(soup: BeautifulSoup):
 
 
 def add_physio(table) -> None:
-    rows = table.find_all("tr") if table else []
+    if table is None:
+        return
+
+    rows = table.find_all("tr")
     if not rows:
         return
 
     for row in rows:
-        tds = row.find_all("td")[1:]
-        if not tds:
+        tds = row.find_all("td")
+        if len(tds) != 3:
             continue
-        for td in tds:
-            print(td.get_text)
+
+        reg_no = tds[0].get_text(strip=True)
+        eng_name = tds[1].get_text(strip=True)
+        chi_name = tds[2].get_text(strip=True)
+
+        physio_name[eng_name] = physio_name.get(eng_name, 0) + 1
+        physio_name[chi_name] = physio_name.get(chi_name, 0) + 1
 
 
 def save_physio() -> None:
@@ -79,11 +88,42 @@ def load_physio_set() -> set[str]:
 
 
 def fetch_physio():
-    pass
+    page = 1
+    session = requests.Session()
+    session.headers.update(
+        {
+            "User-Agent": "Mozilla/5.0",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Referer": "https://www.smp-council.org.hk/pt/en/content.php?page=reg_reg",
+        }
+    )
+
+    while True:
+        html: str | None = fetch_page_with_retries(session, page, MAX_RETRIES)
+        if html is None:
+            break
+
+        soup = BeautifulSoup(html, "lxml")
+        tables = find_tables(soup)
+        if tables is None:
+            break
+
+        for table in tables:
+            add_physio(table)
+
+        page += 1
 
 
 def main():
-    pass
+    # this will populate physio_name
+    fetch_physio()
+
+    print(physio_name)
+    print(len(physio_name))
+    print(physio_name["name_repeated_count"])
+
+    # save the physio name locally
+    # save_physio()
 
 
 if __name__ == "__main__":
