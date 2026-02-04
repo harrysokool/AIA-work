@@ -1,11 +1,6 @@
 ﻿file,doctor_name,confidence,registered
-sample1 copy.jpg,,0.0,False
 sample1.jpg,,0.0,False
-sample2 copy.jpg,HUNG HAK HON,0.95,True
 sample2.jpg,HUNG HAK HON,0.95,True
-sample3 copy.jpg,,0.0,False
 sample3.jpg,,0.0,False
-sample4 copy.jpg,PROCEDURE S,0.95,False
 sample4.jpg,PROCEDURE S,0.95,False
-sample5 copy.jpg,NG PING KI GARY,0.95,True
 sample5.jpg,NG PING KI GARY,0.95,True
