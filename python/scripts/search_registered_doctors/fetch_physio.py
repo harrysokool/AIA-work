@@ -10,25 +10,24 @@ class RetryableFetchError(Exception):
     """Signals a transient error that may succeed on retry."""
 
 
-physio_name = {"name_repeated_count": 0}
+physio_name: dict[int] = {"name_repeated_count": 0}
 BASE_URL = "https://www.smp-council.org.hk/hkifd/browse.php"
 MAX_RETRIES = 5
 
 
-def fetch_page(session: requests.Session, page: int) -> str | None:
-    params = {"serach": f"PT{str(page)}"}
-    resp = session.get(BASE_URL, params=params, timeout=30)
+def fetch_page(session: requests.Session) -> str | None:
+    resp = session.get(BASE_URL, timeout=30)
     if resp.status_code != 200:
         raise RetryableFetchError("Error when accessing website")
     return resp.text
 
 
 def fetch_page_with_retries(
-    session: requests.Session, page: int, retries: int = MAX_RETRIES
+    session: requests.Session, retries: int = MAX_RETRIES
 ) -> str | None:
     for attempt in range(1, retries + 1):
         try:
-            return fetch_page(session, page)
+            return fetch_page(session)
 
         except RetryableFetchError as e:
             err = e
@@ -48,7 +47,7 @@ def fetch_page_with_retries(
 
 def find_tables(soup: BeautifulSoup):
     tables = soup.find_all("table")
-    if not tables or len(tables) <= 2:
+    if not tables or len(tables) < 2:
         return None
     return tables[2:]
 
@@ -72,6 +71,9 @@ def add_physio(table) -> None:
 
         physio_name[eng_name] = physio_name.get(eng_name, 0) + 1
         physio_name[chi_name] = physio_name.get(chi_name, 0) + 1
+        if eng_name in physio_name or chi_name in physio_name:
+            physio_name["name_repeated_count"] += 1
+        print(reg_no, eng_name, chi_name)
 
 
 def save_physio() -> None:
@@ -79,16 +81,15 @@ def save_physio() -> None:
         pickle.dump(physio_name, f)
     with open("physio.txt", "w", encoding="utf-8") as f:
         for name in physio_name:
-            f.write(name + "\n")
+            f.write(f"{name}\n")
 
 
-def load_physio_set() -> set[str]:
+def load_physio_set() -> dict[int]:
     with open("physio.pkl", "rb") as f:
         return pickle.load(f)
 
 
 def fetch_physio():
-    page = 1
     session = requests.Session()
     session.headers.update(
         {
@@ -98,20 +99,20 @@ def fetch_physio():
         }
     )
 
-    while True:
-        html: str | None = fetch_page_with_retries(session, page, MAX_RETRIES)
-        if html is None:
-            break
+    # while True:
+    html: str | None = fetch_page_with_retries(session, MAX_RETRIES)
+    if html is None:
+        return
 
-        soup = BeautifulSoup(html, "lxml")
-        tables = find_tables(soup)
-        if tables is None:
-            break
+    soup = BeautifulSoup(html, "lxml")
+    tables = find_tables(soup)
+    if tables is None:
+        return
 
-        for table in tables:
-            add_physio(table)
+    for table in tables:
+        add_physio(table)
 
-        page += 1
+    return
 
 
 def main():
@@ -123,7 +124,7 @@ def main():
     print(physio_name["name_repeated_count"])
 
     # save the physio name locally
-    # save_physio()
+    save_physio()
 
 
 if __name__ == "__main__":
@@ -132,9 +133,3 @@ if __name__ == "__main__":
     toc = time.perf_counter()
 
     print(f"Time took: {toc - tic:0.4f}s")
-
-
-# 1. we need to fetch the page, may be add some retries
-# 2. now search all the table with beautiful soup
-# 3. after find all the names, we don't even need to do anything to the names, we can just add it into the set
-# 4. store it somewhere,
