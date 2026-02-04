@@ -18,6 +18,8 @@ python/scripts/search_registered_doctors/doctor_receipts/
 python/scripts/search_registered_doctors/preprocessed_out/
 python/scripts/search_registered_doctors/doctors.pkl
 python/scripts/search_registered_doctors/doctors.txt
+python/scripts/search_registered_doctors/physio.pkl
+python/scripts/search_registered_doctors/physio.txt
 
 # Playwright cache (optional)
 .playwright/
