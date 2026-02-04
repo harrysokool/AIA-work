@@ -69,10 +69,12 @@ def add_physio(table) -> None:
         eng_name = tds[1].get_text(strip=True)
         chi_name = tds[2].get_text(strip=True)
 
-        physio_name[eng_name] = physio_name.get(eng_name, 0) + 1
-        physio_name[chi_name] = physio_name.get(chi_name, 0) + 1
         if eng_name in physio_name or chi_name in physio_name:
             physio_name["name_repeated_count"] += 1
+
+        physio_name[eng_name] = physio_name.get(eng_name, 0) + 1
+        physio_name[chi_name] = physio_name.get(chi_name, 0) + 1
+
         print(reg_no, eng_name, chi_name)
 
 
@@ -119,10 +121,7 @@ def main():
     # this will populate physio_name
     fetch_physio()
 
-    print(physio_name)
-    print(len(physio_name))
     print(physio_name["name_repeated_count"])
-
     # save the physio name locally
     save_physio()
 
