@@ -13,7 +13,7 @@ class RetryableFetchError(Exception):
     """Signals a transient error that may succeed on retry."""
 
 
-doctors_name = {}
+doctors_name = {"name_repeated_count": 0}
 set_lock = asyncio.Lock()
 ALPHABET_SET: Set[str] = set("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
 
@@ -65,7 +65,7 @@ async def fetch_page(
             if 500 <= resp.status < 600:
                 raise RetryableFetchError(f"HTTP {resp.status} Server Error")
             if resp.status != 200:
-                # Non-retryable (likely)
+                # Non-retryable
                 text = await resp.text()
                 raise Exception(f"HTTP {resp.status}: {text[:200]}")
             return await resp.text()
@@ -123,6 +123,8 @@ async def add_doctors(rows: List[Tag]) -> None:
                 res_name = re.sub(r"\s*\([^)]*\)", "", res_name)
                 async with set_lock:
                     doctors_name[res_name] = doctors_name.get(res_name, 0) + 1
+                if res_name not in doctors_name:
+                    doctors_name["name_repeated_count"] += 1
 
 
 async def worker(
@@ -141,11 +143,11 @@ async def worker(
             soup = BeautifulSoup(html, "lxml")
             table = find_table(soup)
             if table is None:
-                break
+                continue
 
             rows = table.find_all("tr")[2:] if table else []
             if not rows or "沒有相關搜尋結果" in rows[0].get_text(strip=True):
-                break
+                continue
 
             await add_doctors(rows)
 
@@ -168,7 +170,7 @@ async def fetch_doctors(doctor_type: str) -> None:
         enable_cleanup_closed=True,
         ttl_dns_cache=300,
     )
-    headers = {"User-Agent": "AuditScraper/1.0 (+you@example.com)"}
+    headers = {"User-Agent": "MyApp/1.0 (+https://example.com/contact)"}
     async with aiohttp.ClientSession(
         timeout=timeout, connector=connector, headers=headers
     ) as session:
@@ -184,6 +186,7 @@ async def fetch_doctors(doctor_type: str) -> None:
         # cancel the workers because workers run forever in a while True loop
         for w in workers:
             w.cancel()
+
         await asyncio.gather(*workers, return_exceptions=True)
 
 
@@ -213,3 +216,4 @@ if __name__ == "__main__":
 # P, 555, 555
 # M, 367, 367
 # N, 154, 154
+# real total: 17980
