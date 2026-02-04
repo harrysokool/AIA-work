@@ -69,7 +69,7 @@ def add_physio(table) -> None:
         eng_name = tds[1].get_text(strip=True)
         chi_name = tds[2].get_text(strip=True)
 
-        if eng_name in physio_name or chi_name in physio_name:
+        if eng_name in physio_name:
             physio_name["name_repeated_count"] += 1
 
         physio_name[eng_name] = physio_name.get(eng_name, 0) + 1

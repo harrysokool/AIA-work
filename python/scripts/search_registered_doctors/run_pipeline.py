@@ -4,11 +4,12 @@ import csv
 import time
 
 from fetch_doctor import load_doctors_set
+from fetch_physio import load_physio_set
 from extract_doctors import extract_doctor_name
 
 # Input directory (raw images only)
 RAW_DIR = Path("doctor_receipts")
-OUT_CSV = Path("result.csv")  # or Path("out") / "result.csv"
+OUT_CSV = Path("result.csv")
 
 
 def write_csv(rows: list[dict], filepath: Path) -> None:
@@ -38,6 +39,7 @@ def _norm_name(s: str | None) -> str | None:
     # normalize whitespace, remove common prefixes, lowercase for matching
     t = s.strip().replace("\u3000", " ")
     t = " ".join(t.split())
+
     # remove 'Dr' prefixes commonly found in OCR outputs
     for p in ("Dr. ", "Dr ", "DR. ", "DR "):
         if t.startswith(p):
@@ -53,12 +55,17 @@ def run_pipeline():
 
     # 1) Load doctor list
     print("[1] Loading HKMC registered doctors list...")
-    hk_doctors = load_doctors_set()  # expected to be an iterable (e.g., set)
+    hk_doctors = load_doctors_set()
+    hk_physio = load_physio_set()
+
     # normalize registry upfront for robust matching
     hk_doctors_norm = {_norm_name(n) for n in hk_doctors if _norm_name(n)}
-    print(f"[INFO] Loaded {len(hk_doctors)} doctors.\n")
+    hk_physio_norm = {_norm_name(n) for n in hk_physio if _norm_name(n)}
+    print(hk_physio)
+    print(f"[INFO] Loaded {len(hk_doctors)//2} doctors.\n")
+    print(f"[INFO] Loaded {len(hk_physio)//2} physiotherapist.\n")
 
-    # 2) Extract doctor names directly from RAW receipts (no preprocessing)
+    # 2) Extract doctor names directly from RAW receipts
     print("[2] Extracting doctor names from raw images...\n")
 
     results: list[dict] = []
@@ -83,17 +90,18 @@ def run_pipeline():
 
         if result:
             doctor_name = result.get("doctor_name")
-            confidence = float(result.get("confidence", 0.0) or 0.0)
         else:
             doctor_name = None
-            confidence = 0.0
 
         print("Extracted name:  ", doctor_name)
-        print("Confidence:      ", confidence)
+        # print("Confidence:      ", confidence)
 
         # 3) Check if doctor is in HK Doctor lists
         norm_doc = _norm_name(doctor_name)
-        is_registered = norm_doc in hk_doctors_norm if norm_doc else False
+        if norm_doc in hk_doctors_norm or norm_doc in hk_physio_norm:
+            is_registered = True
+        else:
+            is_registered = False
 
         print("HK Registered?:  ", is_registered)
         print("")
@@ -102,12 +110,11 @@ def run_pipeline():
             {
                 "file": filename,
                 "doctor_name": doctor_name,
-                "confidence": confidence,
                 "registered": is_registered,
             }
         )
 
-    # 4) Export CSV for Excel  ✅ FIXED: pass results and a Path
+    # 4) Export CSV for Excel
     write_csv(results, OUT_CSV)
 
     print("\n========================================")
