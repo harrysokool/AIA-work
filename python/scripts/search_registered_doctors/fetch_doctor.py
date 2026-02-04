@@ -3,7 +3,7 @@ import threading
 import time
 import asyncio
 import aiohttp
-from typing import Optional, List, Set
+from typing import Optional, List
 import pickle
 import random
 import re
@@ -15,32 +15,31 @@ class RetryableFetchError(Exception):
 
 doctors_name = {"name_repeated_count": 0}
 set_lock = asyncio.Lock()
-ALPHABET_SET: Set[str] = set("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+ALPHABET_SET: set[str] = set("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
 
 CONCURRENCY_LIMIT = 20
 SEM = asyncio.Semaphore(CONCURRENCY_LIMIT)
 MAX_RETRIES = 5
 REQUEST_PAUSE = (0.05, 0.15)
 
-OUTPUT_FILE = "doctors.pkl"
 BASE_URL = "https://www.mchk.org.hk/english/list_register/list.php"
 DOCTOR_TYPE = ["L", "O", "P", "M", "N"]
 
 
 # helper functions
 def save_doctors() -> None:
-    with open(OUTPUT_FILE, "wb") as f:
+    with open("doctors.pkl", "wb") as f:
         pickle.dump(doctors_name, f)
     with open("doctors.txt", "w", encoding="utf-8") as f:
         for name in doctors_name:
             f.write(name + "\n")
 
 
-def load_doctors_set() -> Set[str]:
+def load_doctors_set() -> dict[str]:
     """
     Load the scraped registered doctors from doctors.pkl.
     """
-    with open(OUTPUT_FILE, "rb") as f:
+    with open("doctors.pkl", "rb") as f:
         return pickle.load(f)
 
 
@@ -192,7 +191,7 @@ async def fetch_doctors(doctor_type: str) -> None:
         await asyncio.gather(*workers, return_exceptions=True)
 
 
-async def main() -> Set[str]:
+async def main():
     # for each doctor type, we scrape them separately and concurrently
     tasks = [fetch_doctors(doc_type) for doc_type in DOCTOR_TYPE]
     await asyncio.gather(*tasks)
