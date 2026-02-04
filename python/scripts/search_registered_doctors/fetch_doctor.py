@@ -123,8 +123,10 @@ async def add_doctors(rows: List[Tag]) -> None:
                 res_name = re.sub(r"\s*\([^)]*\)", "", res_name)
                 async with set_lock:
                     doctors_name[res_name] = doctors_name.get(res_name, 0) + 1
-                if res_name not in doctors_name:
+                if res_name in doctors_name:
                     doctors_name["name_repeated_count"] += 1
+            else:
+                doctors_name[name] = doctors_name.get(name, 0) + 1
 
 
 async def worker(
@@ -197,6 +199,8 @@ async def main() -> Set[str]:
 
     print(dict(sorted(doctors_name.items(), key=lambda x: x[1])))
     print(len(doctors_name))
+    print(doctors_name["name_repeated_count"])
+
     save_doctors()
 
 
