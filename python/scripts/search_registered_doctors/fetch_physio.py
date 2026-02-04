@@ -47,13 +47,22 @@ def fetch_page_with_retries(
 
 def find_tables(soup: BeautifulSoup):
     tables = soup.find_all("table")
-    if not tables:
+    if not tables or len(tables) <= 2:
         return None
     return tables[2:]
 
 
-def add_physio() -> None:
-    pass
+def add_physio(table) -> None:
+    rows = table.find_all("tr") if table else []
+    if not rows:
+        return
+
+    for row in rows:
+        tds = row.find_all("td")[1:]
+        if not tds:
+            continue
+        for td in tds:
+            print(td.get_text)
 
 
 def save_physio() -> None:
