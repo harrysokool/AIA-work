@@ -1,0 +1,18 @@
+02/12/2026
+refine the ppt for both claims and agency
+ask about the framework for Kacie
+ask more about the POS review
+study for the powerBI and databricks
+continue to read through what is going on with the script for ipynb
+changes to be made for the powerpioint:
+need to add more detail
+the main focus is on the customer doctor or something like that, not the panel doctor
+add some sort of flow chart in the ppt
+some background information, currently there are 2 ways to submits the claims, one is paper form, another one is e-form
+for paper form, the team will check and validate everything initially, like for the doctor, it will check if the doctor exist in their own internal list, if not in the list, they will validate the doctor and add the doctor to the list
+for the e-form, they will use ocr to try to capture the all the relevant information, and to validate the doctor, if the ocr is able to capture the name of the doctor, it will check with their internal list, if the doctor exist/in the list, then the claim is valid, if the ocr is not able to capture the doctors name like misspelled or empty or whatever, i think it will go to the manual process, which is similar to the paper form, where someone will check and validate the doctor and if the doctor is in the list then is fine, else they will validate the doctor and add it to the list.
+here is the problem, currently they are only validating the doctor initially, by that I mean once the doctor is added to the internal list, the internal list does not get updated at all, so like if anything happened to that doctor such as their licence is invalid/retired/death whatever reason, we will not know because we are only checking against with the internal list, which is not the most up to date list. 
+So the main point is that the internal list is not the most up to date list, and if anything happened to a doctor that is in the list, we would never know about it.
+That's why it is a huge risk and we need to address this risk.
+ 
+ 
